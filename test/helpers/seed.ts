@@ -3,8 +3,8 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import request from "supertest";
 import { hashPassword } from "../../src/auth/password.js";
 import type { Database } from "../../src/db/client.js";
-import { companies, users, type Role } from "../../src/db/schema.js";
-import { TEST_ADMIN_API_KEY } from "./test-db.js";
+import { articles, authors, categories, companies, jobs, users, type Role } from "../../src/db/schema.js";
+import { TEST_ADMIN_API_KEY, TEST_SITE_API_KEY } from "./test-db.js";
 
 export const PASSWORD = "correct-horse-battery-1";
 
@@ -52,3 +52,84 @@ export async function login(app: NestExpressApplication, email: string, password
 }
 
 export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+const DAY = 86_400_000;
+export const daysFromNow = (days: number) => new Date(Date.now() + days * DAY);
+
+/** As the website server would call the API. */
+export function asSiteServer(ip = `203.0.113.${Math.floor(Math.random() * 250)}-${randomUUID().slice(0, 4)}`) {
+  return { "x-api-key": TEST_SITE_API_KEY, "x-client-ip": ip };
+}
+
+export async function createCategory(db: Database, input: Partial<typeof categories.$inferInsert> = {}) {
+  const [row] = await db
+    .insert(categories)
+    .values({
+      slug: input.slug ?? `cat-${randomUUID().slice(0, 8)}`,
+      kind: input.kind ?? "blog",
+      name: input.name ?? "Technology",
+      description: input.description ?? "Plain-language explainers on technology.",
+      ...input,
+    })
+    .returning();
+  return row;
+}
+
+export async function createAuthor(db: Database, input: Partial<typeof authors.$inferInsert> = {}) {
+  const [row] = await db
+    .insert(authors)
+    .values({
+      slug: input.slug ?? `author-${randomUUID().slice(0, 8)}`,
+      name: "Ayesha Khan",
+      role: "Senior editor",
+      bio: "Ayesha writes practical guides about careers, technology and learning at work.",
+      avatar: "/images/authors/ayesha.png",
+      ...input,
+    })
+    .returning();
+  return row;
+}
+
+export async function createArticle(
+  db: Database,
+  input: Partial<typeof articles.$inferInsert> & { category: string; author: string },
+) {
+  const [row] = await db
+    .insert(articles)
+    .values({
+      slug: input.slug ?? `post-${randomUUID().slice(0, 8)}`,
+      title: "How to plan a focused working week",
+      excerpt: "A practical, tested approach to planning your week so the important work actually gets done.",
+      body: "Intro paragraph.\n\n## Why it matters\n\nBody text here.\n\n### Details\n\nMore.",
+      tags: ["productivity", "planning"],
+      status: "published",
+      publishedAt: daysFromNow(-1),
+      coverImage: "/images/covers/week.png",
+      coverAlt: "A desk with a weekly planner",
+      ...input,
+    })
+    .returning();
+  return row;
+}
+
+export async function createJob(db: Database, input: Partial<typeof jobs.$inferInsert> & { category: string }) {
+  const [row] = await db
+    .insert(jobs)
+    .values({
+      slug: input.slug ?? `job-${randomUUID().slice(0, 8)}`,
+      title: "Frontend Developer",
+      company: "Acme",
+      country: "Pakistan",
+      city: "Lahore",
+      workModel: "hybrid",
+      employmentType: "full-time",
+      experience: "mid",
+      summary: "Build fast, accessible interfaces for our hiring products with a small team.",
+      applyUrl: "https://acme.test/apply",
+      status: "published",
+      postedAt: daysFromNow(-2),
+      ...input,
+    })
+    .returning();
+  return row;
+}

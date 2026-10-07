@@ -9,6 +9,7 @@ export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://po
 
 export const TEST_JWT_SECRET = "test-jwt-secret-0123456789abcdef0123456789abcdef";
 export const TEST_ADMIN_API_KEY = "test-admin-key-0123456789abcdef0123456789abcdef";
+export const TEST_SITE_API_KEY = "test-site-key-0123456789abcdef0123456789abcdef0";
 
 const TABLES = [
   "sessions",
@@ -35,6 +36,7 @@ export async function connectTestDb(): Promise<DbConnection> {
   process.env.DATABASE_URL = TEST_DATABASE_URL;
   process.env.JWT_SECRET = TEST_JWT_SECRET;
   process.env.ADMIN_API_KEY = TEST_ADMIN_API_KEY;
+  process.env.SITE_API_KEY = TEST_SITE_API_KEY;
   process.env.REVALIDATE_SECRET = "";
   resetEnvCache();
   const connection = connectDb(TEST_DATABASE_URL);

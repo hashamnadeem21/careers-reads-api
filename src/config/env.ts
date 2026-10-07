@@ -17,6 +17,8 @@ const origin = (fallback: string) =>
 
 const envSchema = z.object({
   PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(4000)),
+  /** Proxies in front of the API (Railway/Render/Fly: 1). req.ip is the address before them. */
+  TRUST_PROXY: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).default(1)),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, "DATABASE_URL must be a postgres:// connection string"),
   /** Signs access and refresh tokens. Generate with: openssl rand -hex 32 */
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters (openssl rand -hex 32)"),
