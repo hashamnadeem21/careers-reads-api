@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phases 1–7 are built, plus the API part of Phase 8 (Dockerfile, CI, README). The rest of Phase 8 (admin and website CI, READMEs, go-live) is next. Production API: `https://api-careersreads.com`. See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–7 are built, plus the API part of Phase 8 (Dockerfile, CI, README). The rest of Phase 8 (admin and website CI, READMEs, go-live) is next. Production API: `https://api.careersreads.com`. See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -90,7 +90,7 @@ Every admin write goes through one service method that (1) checks role and scope
 
 ## Hosting
 
-The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `https://api-careersreads.com`. The admin and website stay on Vercel.
+The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `https://api.careersreads.com`. The admin and website stay on Vercel.
 
 ---
 
@@ -176,7 +176,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 
 ## Going live checklist
 
-- [ ] Deploy the API to Railway/Render/Fly at `api-careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
+- [ ] Deploy the API to Railway/Render/Fly at `api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
 - [ ] Run `npm run db:migrate` from the API (the only repo that migrates from now on).
 - [ ] Website (Vercel): remove `DATABASE_URL`, add `API_URL` + `SITE_API_KEY`. Redeploy **before** the admin.
 - [ ] Admin (Vercel): remove `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, add `API_URL` + `ADMIN_API_KEY`. Redeploy.
@@ -243,8 +243,8 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - `src/shared/` was **not** deleted. The post preview (`renderPostPreview`, kept local as planned), the editor's live hints and the job/settings label lists need the MDX rules, `toc`, schemas and label lists. It is now a display copy synced from the API (`npm run sync:shared` reads `../blognest-api`). The unused files (visibility, blog categories) were removed.
 - `pg` stays as a **dev** dependency: the existing e2e specs inspect the test database directly (17 queries) and had to pass unchanged. The app has no database dependency; `tests/unit/security.test.ts` fails if anything in `src/` imports one.
 - e2e: `global-setup` runs the API's `npm run e2e:seed` (migrate, truncate, import the site's content, create the QA accounts passed in `E2E_SEED`; refuses databases not named `*_test`). Playwright starts the API (:3103), the website (:3102, which waits for the API before `next build`) and the admin (:3101).
-- Admin env is `API_URL` (production default `https://api-careersreads.com`), `ADMIN_API_KEY`, `PUBLIC_SITE_URL`. Old sessions aren't used any more, so everyone signs in once after the switch.
+- Admin env is `API_URL` (production default `https://api.careersreads.com`), `ADMIN_API_KEY`, `PUBLIC_SITE_URL`. Old sessions aren't used any more, so everyone signs in once after the switch.
 
 ### Phase 8 (API part)
-- Production URL is `https://api-careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.
+- Production URL is `https://api.careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.
 - `Dockerfile` (multi-stage, health check), `.github/workflows/check.yml` (Postgres 18 service, `npm run check`), `TRUST_PROXY` env (default 1), CORS still off unless `CORS_ORIGINS` is set, README with the env table and the go-live checklist.
