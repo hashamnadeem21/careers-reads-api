@@ -36,6 +36,17 @@ const envSchema = z.object({
   PUBLIC_SITE_URL: origin("http://localhost:3000"),
   /** Shared with the website's /api/revalidate. */
   REVALIDATE_SECRET: optional(z.string().min(16)),
+  /** Vercel Blob token. Set in production: uploads go to Blob instead of UPLOADS_DIR. */
+  BLOB_READ_WRITE_TOKEN: optional(z.string()),
+  /** Local uploads (development): the website's public/uploads, so /uploads/… URLs keep working. */
+  UPLOADS_DIR: z.preprocess(emptyToUndefined, z.string().default("../blognest/public/uploads")),
+  /**
+   * Self-hosted uploads: the public URL UPLOADS_DIR is served at (e.g. https://api.careersreads.com/uploads,
+   * served by Nginx). Set → files stay on this server in production too, and URLs are absolute.
+   */
+  UPLOADS_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
+  /** Production refuses local uploads unless this is "true" (e2e runs of a production build). */
+  ALLOW_LOCAL_UPLOADS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("false")),
   /** Comma-separated browser origins allowed by CORS. Empty = CORS off (server-to-server only). */
   CORS_ORIGINS: z.preprocess(
     emptyToUndefined,

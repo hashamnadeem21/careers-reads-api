@@ -39,6 +39,7 @@ npm run start:dev           # http://localhost:4000
 | `npm run db:generate` | Create a migration after editing `src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` (this repo is the only one that migrates) |
 | `npm run db:studio` | Drizzle Studio |
+| `npm run db:import [-- --include-samples]` | Copy the website's `content/` files (`BLOGNEST_DIR`, default `../blognest`) into the database. Upserts, so it overwrites edits made in the admin |
 | `npm run admin:create -- email "Name" [--reset]` | Create the first super admin, or reset someone's password (they become a super admin), with a temporary password |
 | `npm test` | Unit tests (`src/**/*.spec.ts`) |
 | `npm run test:e2e` | HTTP tests against the `blognest_test` database (`test/**/*.e2e-spec.ts`) |
@@ -79,18 +80,21 @@ test/                e2e tests + helpers (test DB, app factory)
 | `REVALIDATE_SECRET` | Yes in production | Same value as the website's; the API calls its `/api/revalidate` after saves |
 | `PORT` | No | Default 4000 |
 | `TRUST_PROXY` | No | Proxies in front of the API (default 1) |
+| `BLOB_READ_WRITE_TOKEN` | In production, this or `UPLOADS_PUBLIC_URL` | Vercel Blob token for media uploads. Without it, uploads go to `UPLOADS_DIR` |
+| `UPLOADS_DIR` | No | Local uploads folder, default `../blognest/public/uploads` so `/uploads/…` URLs work on the website |
+| `UPLOADS_PUBLIC_URL` | In production, this or `BLOB_READ_WRITE_TOKEN` | Self-hosted uploads: the public URL `UPLOADS_DIR` is served at (production: `https://api.careersreads.com/uploads`, served by Nginx). Uploads return absolute URLs under it |
 | `CORS_ORIGINS` | No | Leave empty: browsers never call the API directly |
 | `ACCESS_TOKEN_TTL_SECONDS` / `REFRESH_TOKEN_DAYS` | No | Default 900 seconds / 30 days |
 
 ## Deploying
 
-The API is a long-running Node server: host it on Railway, Render or Fly (not Vercel) at `api.careersreads.com`. The `Dockerfile` builds a production image with a health check on `GET /health`. CI (`.github/workflows/check.yml`) runs `npm run check` against a Postgres service on every push and pull request.
+The API is a long-running Node server: host it on Railway, Render or Fly (not Vercel) at `https://api.careersreads.com`. The `Dockerfile` builds a production image with a health check on `GET /health`. CI (`.github/workflows/check.yml`) runs `npm run check` against a Postgres service on every push and pull request.
 
 ### Going live checklist
 
-- [ ] Deploy the API at `api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL` (and `BLOB_READ_WRITE_TOKEN` once media uploads move here).
+- [ ] Deploy the API at `https://api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
 - [ ] Run `npm run db:migrate` from the API (the only repo that migrates from now on).
-- [ ] Website (Vercel): remove `DATABASE_URL`, add `API_URL` + `SITE_API_KEY`. Redeploy **before** the admin.
+- [ ] Website (Vercel): remove `DATABASE_URL`, add `SITE_API_KEY` (production deployments use `https://api.careersreads.com` unless `API_URL` overrides it). Redeploy **before** the admin.
 - [ ] Admin (Vercel): remove `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, add `API_URL` + `ADMIN_API_KEY`. Redeploy.
 - [ ] Log in to the admin, publish a test post, and confirm it appears on the site within seconds.
 - [ ] Rotate the old `DATABASE_URL` password so only the API can connect.

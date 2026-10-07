@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phases 1–4 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phases 5–7 are next. See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–7 are built, plus the API part of Phase 8 (Dockerfile, CI, README). The rest of Phase 8 (admin and website CI, READMEs, go-live) is next. Production API: `https://api.careersreads.com`. See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -68,14 +68,15 @@ Every admin write goes through one service method that (1) checks role and scope
 | Auth | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`, `GET /auth/me` |
 | Posts | `GET/POST /posts`, `GET/PATCH/DELETE /posts/:id`, `POST /posts/:id/duplicate`, `POST /posts/bulk` |
 | Jobs | `GET/POST /jobs`, `GET/PATCH/DELETE /jobs/:id`, `POST /jobs/:id/{duplicate,close,status,approve,reject}`, `POST /jobs/bulk` |
+| Editor lookups | `GET /posts/options`, `GET /jobs/options`, `GET /jobs/review-count`, `GET /companies/options`, `GET /companies/:id/dashboard` |
 | Media | `POST /media` (multipart), `GET /media?q=`, `PATCH /media/:id`, `GET /media/:id/usage`, `DELETE /media/:id` |
 | Categories | `GET/POST /categories`, `PATCH/DELETE /categories/:id`, `POST /categories/reorder` |
 | Authors | `GET/POST /authors`, `PATCH/DELETE /authors/:id` |
 | Companies | `GET/POST /companies`, `PATCH/DELETE /companies/:id`, `POST /companies/:id/active`, `POST /companies/:id/invites` |
-| Users | `GET /users`, `PATCH /users/:id/role`, `DELETE /users/:id`, `POST /invites`, `DELETE /invites/:id`, `GET /invites/:token`, `POST /invites/:token/accept` |
+| Users | `GET /users`, `PATCH /users/:id/role`, `DELETE /users/:id`, `POST /invites`, `DELETE /invites?email=`, `GET /invites/:token`, `POST /invites/:token/accept` |
 | Messages | `GET /messages`, `PATCH /messages/:id`, `DELETE /messages/:id`, `GET /subscribers`, `DELETE /subscribers`, `GET /subscribers/export.csv` |
 | Settings | `GET/PUT /settings` |
-| Dashboard | `GET /dashboard`, `GET /dashboard/stats?range=`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
+| Dashboard | `GET /dashboard`, `GET /dashboard/badges`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
 | Search | `GET /search?q=` |
 | Public (website) | `GET /public/articles`, `/public/articles/:slug`, `/public/jobs`, `/public/jobs/:slug`, `/public/categories`, `/public/authors`, `/public/settings`; `POST /public/contact`, `/public/subscribe`, `/public/stats` |
 
@@ -89,7 +90,7 @@ Every admin write goes through one service method that (1) checks role and scope
 
 ## Hosting
 
-The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `api.careersreads.com`. The admin and website stay on Vercel.
+The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `https://api.careersreads.com`. The admin and website stay on Vercel.
 
 ---
 
@@ -218,5 +219,32 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - Reads keep `unstable_cache` with the same tags (the site doesn't use Cache Components), so `/api/revalidate` works unchanged.
 - `CACHE_TAGS` moved to `src/lib/cache-tags.ts`; `hasDatabase()` became `hasApi()`.
 
+### Phase 5
+- `PostsModule`, `JobsModule`, `MediaModule`. Posts and jobs are keyed by **slug** (the `:id` in the endpoint map). Extra read routes: `GET /posts/options` (blog categories + authors), `GET /jobs/options` (job categories), `GET /jobs/review-count` (staff badge). `GET /jobs/:slug` returns `{ job, stats: { views, applies } }`. Lists return `{ rows, total, page, pageSize, counts }`, so a list page is one call.
+- **Posts:** `POST /posts` and `PATCH /posts/:slug` take the editor's fields plus `intent` (`draft`, `publish`, `schedule` + `scheduleAt`, `update`, `unpublish`, `autosave`). Success returns `{ slug, status, publishedAt, savedAt, message, siteRefreshed, missingSections }`. Failed checks are `400 validation_failed` with `fields` keyed like the admin's (`images.0.alt`, `coverImage: "Choose a hero image"`, …). Autosaving a live post is `409 autosave_published`. The MDX body check (`@mdx-js/mdx` + `remarkSafeMdx`) runs in the API.
+- **Jobs:** the body is the job form as JSON (strings, blank = not set, lists as arrays, `postedAt`/`deadline` as `YYYY-MM-DD` or ISO, `companyId` for staff). Success returns `{ job, notice, message }`, where `notice` is `submitted`, `saved` or `saved-offline` (the admin's redirect `?notice=`). Jobs another company owns are always `404`. Approve/reject on a job that isn't waiting is `409 not_pending`.
+- **Media:** `POST /media` is multipart (`files`, up to 20, plus `alt`). It returns `{ uploaded, errors }` per file, like the admin did. A file over 5 MB fails the whole request with `413 file_too_large` (multer's limit), and the upload rate limit (60 per 10 minutes) is a `429`. Usage is by id (`GET /media/:id/usage`). `DELETE` on an image in use is `409 in_use` with `error.details.usage`, a new optional field on the error body. Storage: Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set, otherwise `UPLOADS_DIR`.
+- Not ported (they stay in the admin as UI code): `renderPostPreview`, `lib/posts/outline.ts` (it needs `shared/content/toc.ts`, so Phase 7 must keep a copy of that file when it deletes `src/shared/`), `lib/jobs/form-values.ts`.
+- A post or job whose slug is `options`, `review-count` or `bulk` can't be opened by slug. No such slugs exist.
+
+### Phase 6
+- `CategoriesModule`, `AuthorsModule`, `MessagesModule` (`/messages` + `/subscribers`), `SettingsModule` (super admins), `DashboardModule` (`/dashboard`, `/dashboard/badges`, `/activity`), `SearchModule`, `PreferencesModule` (`/me/theme`, `/me/dashboard-layout`). Categories and authors are keyed by slug.
+- **Endpoint map corrections:** `GET /dashboard/stats?range=` was dropped. The admin buckets the 365 daily points from `GET /dashboard` itself (`toBuckets`). `GET /dashboard/badges` replaces the sidebar's two count queries. Invites are revoked with `DELETE /invites?email=` (built that way in Phase 2: invites have no id). An "Editor lookups" row lists the extra read routes.
+- `test/endpoint-map.e2e-spec.ts` parses the endpoint map table in this file and fails if any route is missing from `/docs-json`. Keep the table up to date.
+- Lists return what the admin pages showed: categories with `used`, authors with `posts`, the newest 200 messages / 500 subscribers with `unread` and `subscribers` counts, activity 30 per page.
+- Form errors use the message "Please fix the highlighted fields." (`formBody()` in `common/zod.ts`). Slug clashes on categories and authors are `409 slug_taken` with `fields.slug`. Deleting a category or author that's still used is `409 in_use`.
+- `PUT /me/theme` works for every role. The admin still sets its own theme cookie; the API only stores the preference.
+- `npm run db:import` (port of the admin's `scripts/import-content.ts` + `lib/import/plan.ts`) reads `BLOGNEST_DIR`. The admin's `DashboardLayout` labels stay in the admin; the API only knows the card ids.
+
+### Phase 7
+- The admin calls the API through `src/lib/api/client.ts` (server-only): bearer token from the `cr_admin_access` cookie, `X-Api-Key` (`ADMIN_API_KEY`) and `X-Client-IP` on every call. `apiFetch(path, { dates: true })` revives ISO dates for row-shaped answers; row types live in `src/lib/api/types.ts`.
+- **Refresh happens in `proxy.ts`, not on 401.** Server Components can't write cookies, so a refresh during a page render couldn't store the rotated refresh token (and its reuse would later sign the user out everywhere). The proxy refreshes when the access token has under a minute left, passes the new cookies to the page in the same request, and sets them on the response. A 401 that still reaches the client sends the user to `/login`. The API's 30-second rotation grace covers parallel requests.
+- Every `lib/*` query module and Server Action kept its exported signature, so the screens didn't change. API `fields` errors map into the existing form state (`formErrors()`, `toResult()`).
+- `src/shared/` was **not** deleted. The post preview (`renderPostPreview`, kept local as planned), the editor's live hints and the job/settings label lists need the MDX rules, `toc`, schemas and label lists. It is now a display copy synced from the API (`npm run sync:shared` reads `../blognest-api`). The unused files (visibility, blog categories) were removed.
+- `pg` stays as a **dev** dependency: the existing e2e specs inspect the test database directly (17 queries) and had to pass unchanged. The app has no database dependency; `tests/unit/security.test.ts` fails if anything in `src/` imports one.
+- e2e: `global-setup` runs the API's `npm run e2e:seed` (migrate, truncate, import the site's content, create the QA accounts passed in `E2E_SEED`; refuses databases not named `*_test`). Playwright starts the API (:3103), the website (:3102, which waits for the API before `next build`) and the admin (:3101).
+- Admin env is `API_URL` (production default `https://api.careersreads.com`), `ADMIN_API_KEY`, `PUBLIC_SITE_URL`. Old sessions aren't used any more, so everyone signs in once after the switch.
+
 ### Phase 8 (API part)
+- Production URL is `https://api.careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.
 - `Dockerfile` (multi-stage, health check), `.github/workflows/check.yml` (Postgres 18 service, `npm run check`), `TRUST_PROXY` env (default 1), CORS still off unless `CORS_ORIGINS` is set, README with the env table and the go-live checklist.
