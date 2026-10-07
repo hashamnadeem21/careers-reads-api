@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phases 1–2 are built (`../blognest-api`). See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–4 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phases 5–7 are next. See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -204,3 +204,19 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - `GET /companies/:id/dashboard` replaces `CompanyDashboard`'s three queries. Super admins can open any company's dashboard; a company account can open only its own.
 - `npm run admin:create` moved to the API. The admin's copy still works until Phase 7 deletes it.
 - **Login rate limits** are keyed on `X-Client-IP`, so the admin **must** send `ADMIN_API_KEY` and the visitor's IP. Otherwise every admin user shares one IP bucket (the admin server's).
+
+### Phase 3
+- `PublicModule` (`src/public/`). Rows are mapped with the same Zod schemas as the website's files (`mappers.ts`); a bad row is skipped and logged, never fatal.
+- `GET /public/articles` returns full articles (the website's search needs the body); `?view=summary` drops the body and table of contents. `GET /public/authors/:slug` was added next to the list.
+- `?preview=1` without the site key is a **403**, not silently ignored. Jobs have no preview: draft, future and expired jobs are never returned.
+- `@SiteOnly()` (`common/site-key.guard.ts`) marks the writes: `POST /public/contact`, `/public/subscribe`, `/public/stats`, all `204`. Limits per visitor (`X-Client-IP`): contact 3 and subscribe 5 per 10 minutes, stats 120 per minute. The website keeps its honeypot, fill-time check and email/webhook delivery.
+- Stats read the visitor's user agent from `X-Client-User-Agent` for the bot filter, and only count pages that are live.
+- `RevalidateSiteService` (Phase 2) is the port of the admin's `revalidate-site.ts`.
+
+### Phase 4
+- The website calls the API through `src/lib/api/client.ts` (server-only). Paths are typed from `npm run api:types`; the spec has no response schemas yet, so response types come from the website's own Zod types. `openapi-fetch` wasn't needed.
+- Reads keep `unstable_cache` with the same tags (the site doesn't use Cache Components), so `/api/revalidate` works unchanged.
+- `CACHE_TAGS` moved to `src/lib/cache-tags.ts`; `hasDatabase()` became `hasApi()`.
+
+### Phase 8 (API part)
+- `Dockerfile` (multi-stage, health check), `.github/workflows/check.yml` (Postgres 18 service, `npm run check`), `TRUST_PROXY` env (default 1), CORS still off unless `CORS_ORIGINS` is set, README with the env table and the go-live checklist.
