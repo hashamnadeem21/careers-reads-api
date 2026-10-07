@@ -39,6 +39,7 @@ npm run start:dev           # http://localhost:4000
 | `npm run db:generate` | Create a migration after editing `src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` (this repo is the only one that migrates) |
 | `npm run db:studio` | Drizzle Studio |
+| `npm run db:import [-- --include-samples]` | Copy the website's `content/` files (`BLOGNEST_DIR`, default `../blognest`) into the database. Upserts, so it overwrites edits made in the admin |
 | `npm run admin:create -- email "Name" [--reset]` | Create the first super admin, or reset someone's password (they become a super admin), with a temporary password |
 | `npm test` | Unit tests (`src/**/*.spec.ts`) |
 | `npm run test:e2e` | HTTP tests against the `blognest_test` database (`test/**/*.e2e-spec.ts`) |

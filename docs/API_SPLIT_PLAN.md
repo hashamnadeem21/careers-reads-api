@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phases 1–5 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phases 6–7 are next. Production API: `https://api-careersreads.com`. See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–6 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phase 7 (the admin) is next. Production API: `https://api-careersreads.com`. See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -68,14 +68,15 @@ Every admin write goes through one service method that (1) checks role and scope
 | Auth | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`, `GET /auth/me` |
 | Posts | `GET/POST /posts`, `GET/PATCH/DELETE /posts/:id`, `POST /posts/:id/duplicate`, `POST /posts/bulk` |
 | Jobs | `GET/POST /jobs`, `GET/PATCH/DELETE /jobs/:id`, `POST /jobs/:id/{duplicate,close,status,approve,reject}`, `POST /jobs/bulk` |
+| Editor lookups | `GET /posts/options`, `GET /jobs/options`, `GET /jobs/review-count`, `GET /companies/options`, `GET /companies/:id/dashboard` |
 | Media | `POST /media` (multipart), `GET /media?q=`, `PATCH /media/:id`, `GET /media/:id/usage`, `DELETE /media/:id` |
 | Categories | `GET/POST /categories`, `PATCH/DELETE /categories/:id`, `POST /categories/reorder` |
 | Authors | `GET/POST /authors`, `PATCH/DELETE /authors/:id` |
 | Companies | `GET/POST /companies`, `PATCH/DELETE /companies/:id`, `POST /companies/:id/active`, `POST /companies/:id/invites` |
-| Users | `GET /users`, `PATCH /users/:id/role`, `DELETE /users/:id`, `POST /invites`, `DELETE /invites/:id`, `GET /invites/:token`, `POST /invites/:token/accept` |
+| Users | `GET /users`, `PATCH /users/:id/role`, `DELETE /users/:id`, `POST /invites`, `DELETE /invites` (by email), `GET /invites/:token`, `POST /invites/:token/accept` |
 | Messages | `GET /messages`, `PATCH /messages/:id`, `DELETE /messages/:id`, `GET /subscribers`, `DELETE /subscribers`, `GET /subscribers/export.csv` |
 | Settings | `GET/PUT /settings` |
-| Dashboard | `GET /dashboard`, `GET /dashboard/stats?range=`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
+| Dashboard | `GET /dashboard`, `GET /dashboard/badges`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
 | Search | `GET /search?q=` |
 | Public (website) | `GET /public/articles`, `/public/articles/:slug`, `/public/jobs`, `/public/jobs/:slug`, `/public/categories`, `/public/authors`, `/public/settings`; `POST /public/contact`, `/public/subscribe`, `/public/stats` |
 
@@ -225,6 +226,15 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - **Media:** `POST /media` is multipart (`files`, up to 20, plus `alt`). It returns `{ uploaded, errors }` per file, like the admin did. A file over 5 MB fails the whole request with `413 file_too_large` (multer's limit), and the upload rate limit (60 per 10 minutes) is a `429`. Usage is by id (`GET /media/:id/usage`). `DELETE` on an image in use is `409 in_use` with `error.details.usage`, a new optional field on the error body. Storage: Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set, otherwise `UPLOADS_DIR`.
 - Not ported (they stay in the admin as UI code): `renderPostPreview`, `lib/posts/outline.ts` (it needs `shared/content/toc.ts`, so Phase 7 must keep a copy of that file when it deletes `src/shared/`), `lib/jobs/form-values.ts`.
 - A post or job whose slug is `options`, `review-count` or `bulk` can't be opened by slug. No such slugs exist.
+
+### Phase 6
+- `CategoriesModule`, `AuthorsModule`, `MessagesModule` (`/messages` + `/subscribers`), `SettingsModule` (super admins), `DashboardModule` (`/dashboard`, `/dashboard/badges`, `/activity`), `SearchModule`, `PreferencesModule` (`/me/theme`, `/me/dashboard-layout`). Categories and authors are keyed by slug.
+- **Endpoint map corrections:** `GET /dashboard/stats?range=` was dropped. The admin buckets the 365 daily points from `GET /dashboard` itself (`toBuckets`). `GET /dashboard/badges` replaces the sidebar's two count queries. Invites are revoked with `DELETE /invites` + `{ email }` (built that way in Phase 2: invites have no id). An "Editor lookups" row lists the extra read routes.
+- `test/endpoint-map.e2e-spec.ts` parses the endpoint map table in this file and fails if any route is missing from `/docs-json`. Keep the table up to date.
+- Lists return what the admin pages showed: categories with `used`, authors with `posts`, the newest 200 messages / 500 subscribers with `unread` and `subscribers` counts, activity 30 per page.
+- Form errors use the message "Please fix the highlighted fields." (`formBody()` in `common/zod.ts`). Slug clashes on categories and authors are `409 slug_taken` with `fields.slug`. Deleting a category or author that's still used is `409 in_use`.
+- `PUT /me/theme` works for every role. The admin still sets its own theme cookie; the API only stores the preference.
+- `npm run db:import` (port of the admin's `scripts/import-content.ts` + `lib/import/plan.ts`) reads `BLOGNEST_DIR`. The admin's `DashboardLayout` labels stay in the admin; the API only knows the card ids.
 
 ### Phase 8 (API part)
 - Production URL is `https://api-careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.

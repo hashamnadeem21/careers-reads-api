@@ -18,17 +18,16 @@ export function fieldErrors(error: z.ZodError): Record<string, string> {
  * Usage: `@Body(new ZodPipe(schema)) body: z.infer<typeof schema>`
  */
 export class ZodPipe<T extends z.ZodType> implements PipeTransform<unknown, z.infer<T>> {
-  constructor(private readonly schema: T) {}
+  constructor(
+    private readonly schema: T,
+    /** What the error says above the field messages (forms use "Please fix the highlighted fields."). */
+    private readonly message = "Some fields are invalid.",
+  ) {}
 
   transform(value: unknown): z.infer<T> {
     const parsed = this.schema.safeParse(value);
     if (!parsed.success) {
-      throw new ApiError(
-        HttpStatus.BAD_REQUEST,
-        "validation_failed",
-        "Some fields are invalid.",
-        fieldErrors(parsed.error),
-      );
+      throw new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", this.message, fieldErrors(parsed.error));
     }
     return parsed.data;
   }
@@ -52,3 +51,9 @@ export function ApiZodQuery(schema: z.ZodObject) {
     ),
   );
 }
+
+/** The message form endpoints use for field errors, matching the admin's forms. */
+export const FORM_ERROR = "Please fix the highlighted fields.";
+
+/** `@Body(formBody(schema))`: like ZodPipe, with the admin's form error message. */
+export const formBody = <T extends z.ZodType>(schema: T) => new ZodPipe(schema, FORM_ERROR);

@@ -8,6 +8,13 @@ import { PublicModule } from "./public/public.module.js";
 import { JobsModule } from "./jobs/jobs.module.js";
 import { MediaModule } from "./media/media.module.js";
 import { PostsModule } from "./posts/posts.module.js";
+import { AuthorsModule } from "./authors/authors.module.js";
+import { CategoriesModule } from "./categories/categories.module.js";
+import { DashboardModule } from "./dashboard/dashboard.module.js";
+import { MessagesModule } from "./messages/messages.module.js";
+import { PreferencesModule } from "./preferences/preferences.module.js";
+import { SearchModule } from "./search/search.module.js";
+import { SettingsModule } from "./settings/settings.module.js";
 import { HealthController } from "./health/health.controller.js";
 import { UsersModule } from "./users/users.module.js";
 
@@ -21,6 +28,13 @@ import { UsersModule } from "./users/users.module.js";
     PostsModule,
     JobsModule,
     MediaModule,
+    CategoriesModule,
+    AuthorsModule,
+    MessagesModule,
+    SettingsModule,
+    DashboardModule,
+    SearchModule,
+    PreferencesModule,
     PublicModule,
   ],
   controllers: [HealthController],
