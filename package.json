@@ -26,7 +26,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "admin:create": "tsx scripts/create-admin.ts",
-    "db:import": "tsx scripts/import-content.ts"
+    "db:import": "tsx scripts/import-content.ts",
+    "e2e:seed": "tsx scripts/e2e-seed.ts"
   },
   "dependencies": {
     "@mdx-js/mdx": "^3.1.1",
