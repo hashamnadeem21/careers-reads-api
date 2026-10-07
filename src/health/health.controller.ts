@@ -4,8 +4,10 @@ import { sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { InjectDb } from "../db/db.module.js";
 import { ApiError } from "../common/api-error.js";
+import { Public } from "../auth/decorators.js";
 
 @ApiTags("health")
+@Public()
 @Controller("health")
 export class HealthController {
   constructor(@InjectDb() private readonly db: Database) {}

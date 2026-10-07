@@ -24,14 +24,17 @@
     "db:local:stop": "scripts/db-local.sh stop",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "admin:create": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
+    "@nestjs/jwt": "^12.0.2",
     "@nestjs/platform-express": "^12.0.1",
     "@nestjs/swagger": "^12.0.2",
+    "@node-rs/argon2": "^2.2.2",
     "dotenv": "^18.0.6",
     "drizzle-orm": "^0.45.3",
     "github-slugger": "^2.0.0",

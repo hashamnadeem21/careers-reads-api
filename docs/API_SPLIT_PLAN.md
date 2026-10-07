@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phase 1 is built (`../blognest-api`). See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–2 are built (`../blognest-api`). See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -39,7 +39,8 @@ The plan is split into **8 phases**. Each phase is one work session: follow the 
 - `RolesGuard` + `@Roles()` and a company-scope check replace `requireUser(role)` and `lib/jobs/access.ts`.
 - **Admin side:** the browser never sees the tokens. The admin's Next.js server keeps them in httpOnly cookies on the admin domain, sends `Authorization: Bearer …` from Server Actions and server components, and refreshes automatically when it gets a 401. No CORS is needed.
 - **Login rate limit and argon2 hashing** move to the API unchanged. Existing password hashes keep working.
-- **Website → API:** public reads need no auth. Writes (contact, newsletter, stats) and draft previews send `X-Site-Key: SITE_API_KEY`, and pass the visitor's IP in `X-Forwarded-For` so rate limits still work per visitor.
+- **Server keys:** the admin and website servers send `X-Api-Key` (`ADMIN_API_KEY` / `SITE_API_KEY`) plus the visitor's address in `X-Client-IP`. The API only believes `X-Client-IP` when the key is valid, so per-visitor rate limits (login, contact, stats) still work and can't be spoofed.
+- **Website → API:** public reads need no auth. Writes (contact, newsletter, stats) and draft previews require `SITE_API_KEY`.
 
 ## API layout
 
@@ -108,7 +109,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 ### Phase 2 (`blognest-api`): auth, users, invites, companies
 
 > Implement "Auth design" exactly. Port the logic from `../blognest-admin/src/lib/auth/*`, `src/app/actions/{auth,users,companies}.ts`, `src/lib/users`, `src/lib/companies` and `src/lib/rate-limit.ts`, `src/lib/audit.ts`.
-> `@nestjs/jwt`, `@node-rs/argon2`. Guards: `JwtAuthGuard` (global, `@Public()` to opt out), `RolesGuard`, `SiteKeyGuard`.
+> `@nestjs/jwt`, `@node-rs/argon2`. Guards: `JwtAuthGuard` (global, `@Public()` to opt out), `RolesGuard`, a site-key check for Phase 3.
 > Move `scripts/admin-create` here (`npm run admin:create -- email "Name" [--reset]`).
 > e2e tests: login, wrong password, rate limit, refresh rotation, refresh reuse revokes everything, role change takes effect on the next request, paused company is locked out, invite accept, password change kills other sessions.
 
@@ -117,7 +118,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 ### Phase 3 (`blognest-api`): public endpoints for the website
 
 > Port the read logic from `../blognest/src/lib/content/postgres-repository.ts`, `src/lib/jobs/index.ts`, `src/lib/categories-loader.ts`, `src/lib/site-data.ts`, and the writes from `src/lib/forms/store.ts` and `src/app/api/stats/route.ts`.
-> Build the `/public/*` endpoints from the endpoint map. Visibility (`isPubliclyVisible`, `isJobVisible`) is enforced **in the API**. Drafts only with `X-Site-Key` + `?preview=1`. Writes require `X-Site-Key` and rate-limit by the forwarded IP. Bot filtering stays in the stats endpoint.
+> Build the `/public/*` endpoints from the endpoint map. Visibility (`isPubliclyVisible`, `isJobVisible`) is enforced **in the API**. Drafts only with the site's `X-Api-Key` + `?preview=1`. Writes require the site's `X-Api-Key` and rate-limit by the forwarded IP. Bot filtering stays in the stats endpoint.
 > Add `common/revalidate-site.ts` (port of the admin's `src/lib/revalidate-site.ts`).
 > e2e tests for each endpoint, including that drafts, scheduled posts and expired jobs are never returned without the key.
 
@@ -126,7 +127,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 ### Phase 4 (website `blognest`): read from the API
 
 > Read `AGENTS.md` and the Next.js 16 docs first.
-> Generate a typed client from the API (`npm run api:types` → `src/lib/api/schema.d.ts`) and add `src/lib/api/client.ts` (server-only, adds `X-Site-Key`).
+> Generate a typed client from the API (`npm run api:types` → `src/lib/api/schema.d.ts`) and add `src/lib/api/client.ts` (server-only, adds `X-Api-Key` and `X-Client-IP`).
 > Replace `PostgresContentRepository` with `ApiContentRepository`, and do the same for jobs, categories, authors and settings. Keep the **file fallback** when `API_URL` is unset. Keep `"use cache"` + `cacheTag()` and `/api/revalidate` exactly as they are.
 > Contact, newsletter and `/api/stats` forward to the API with the visitor's IP.
 > Delete `src/db/`, `src/lib/db.ts`, and the `pg`, `@neondatabase/serverless`, `ws`, `drizzle-orm` deps. Replace `DATABASE_URL` with `API_URL` + `SITE_API_KEY` in env and `.env.example`. Update `docs/DATABASE.md` and the README.
@@ -156,7 +157,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 > Generate the typed client (`npm run api:types`). Add `src/lib/api/client.ts` (server-only). It reads tokens from httpOnly cookies, sends the bearer header, refreshes once on 401, and redirects to `/login` if the refresh fails.
 > Rewrite `actions/auth.ts` around `/auth/*`. `getCurrentUser` becomes `GET /auth/me` (still wrapped in `cache()`). `proxy.ts` still only redirects when there are no cookies.
 > Rewrite every Server Action and every page/query that imports `@/db` so it calls the API instead. Map API `fields` errors into the existing form state so the UI doesn't change. Keep `renderPostPreview` local.
-> Delete `src/db/`, `drizzle.config.ts`, `src/shared/`, `src/lib/rate-limit.ts`, `src/lib/audit.ts`, `src/lib/revalidate-site.ts`, `scripts/import-*`, `sync:shared`, and the `drizzle-orm`, `pg`, `@neondatabase/serverless`, `ws`, `@node-rs/argon2`, `@vercel/blob` deps. Env becomes `API_URL` + `PUBLIC_SITE_URL`.
+> Delete `src/db/`, `drizzle.config.ts`, `src/shared/`, `src/lib/rate-limit.ts`, `src/lib/audit.ts`, `src/lib/revalidate-site.ts`, `scripts/import-*`, `sync:shared`, and the `drizzle-orm`, `pg`, `@neondatabase/serverless`, `ws`, `@node-rs/argon2`, `@vercel/blob` deps. Env becomes `API_URL` + `ADMIN_API_KEY` + `PUBLIC_SITE_URL`. Send `X-Api-Key` and `X-Client-IP` on every call (login rate limits need the visitor's IP).
 > Playwright e2e now starts **all three** apps against the test DB. All existing e2e tests must pass unchanged.
 
 **Check:** `grep -r "drizzle\|@/db" src` returns nothing, and every screen works as before. Everyone has to log in once more after this change.
@@ -174,10 +175,10 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 
 ## Going live checklist
 
-- [ ] Deploy the API to Railway/Render/Fly at `api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `SITE_API_KEY`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
+- [ ] Deploy the API to Railway/Render/Fly at `api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
 - [ ] Run `npm run db:migrate` from the API (the only repo that migrates from now on).
 - [ ] Website (Vercel): remove `DATABASE_URL`, add `API_URL` + `SITE_API_KEY`. Redeploy **before** the admin.
-- [ ] Admin (Vercel): remove `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, add `API_URL`. Redeploy.
+- [ ] Admin (Vercel): remove `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, add `API_URL` + `ADMIN_API_KEY`. Redeploy.
 - [ ] Log in to the admin, publish a test post, and confirm it appears on the site within seconds.
 - [ ] Rotate the old `DATABASE_URL` password so only the API can connect.
 
@@ -193,3 +194,13 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - `scripts/db-local.sh` reuses `../blognest-admin/.data/pg` when the API has no `.data/pg` of its own, so all three apps share one local database. Set `PG_DATA_DIR` to override.
 - The migrations and `meta/_journal.json` were copied unchanged: `npm run db:migrate` against the existing local DB applies nothing.
 - Port 4000 by default (`PORT`).
+
+### Phase 2
+- **Refresh tokens are signed JWTs** (`aud: career-reads:refresh`, random `jti`). The `sessions` row id is `sha256(jti)`, so no schema change was needed. Access tokens (`aud: career-reads:access`) carry `sid` = that row id, and `AuthGuard` joins `sessions → users → companies → user_prefs` on every request. Revoking a session, removing a user, pausing a company or changing a role all take effect on the next request.
+- **Rotation grace:** a rotated refresh token keeps working for 30 s (`REFRESH_GRACE_SECONDS`), so the admin's parallel server requests don't trip reuse detection. A validly signed refresh token whose session is gone counts as reuse, and all of that user's sessions are revoked.
+- **One global `AuthGuard`** (APP_GUARD). Routes are private unless marked `@Public()`. Use `@Roles()`, `@StaffOnly()` or `@SuperAdminOnly()`, and `@CurrentUser()` for the user. Users with a temporary password get `403 password_change_required` everywhere except `/auth/me`, `/auth/change-password` and `/auth/logout` (`@AllowPasswordChangePending()`).
+- **Responses:** login, refresh, change-password and invite-accept all return `{ accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt, user }`. `user` includes `theme`, so the admin can set its theme cookie. Actions that the admin used to answer with `{ ok, message }` now return `{ message }` on success and the standard error otherwise (`last_super_admin`, `remove_self`, `already_member`, `name_taken`, `company_paused`, `invite_invalid`, …).
+- **Invite links** are built from `ADMIN_URL` (the admin used the request's Host header).
+- `GET /companies/:id/dashboard` replaces `CompanyDashboard`'s three queries. Super admins can open any company's dashboard; a company account can open only its own.
+- `npm run admin:create` moved to the API. The admin's copy still works until Phase 7 deletes it.
+- **Login rate limits** are keyed on `X-Client-IP`, so the admin **must** send `ADMIN_API_KEY` and the visitor's IP. Otherwise every admin user shares one IP bucket (the admin server's).

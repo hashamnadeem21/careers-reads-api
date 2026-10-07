@@ -2,13 +2,38 @@ import { z } from "zod";
 
 /**
  * Validated environment for the API. Read lazily so scripts and tests can set
- * process.env first. Later phases add JWT_SECRET, SITE_API_KEY, REVALIDATE_SECRET, etc.
+ * process.env first.
  */
 const emptyToUndefined = (value: unknown) => (typeof value === "string" && value.trim() === "" ? undefined : value);
+const optional = <T extends z.ZodType>(schema: T) => z.preprocess(emptyToUndefined, schema.optional());
+const origin = (fallback: string) =>
+  z.preprocess(
+    emptyToUndefined,
+    z
+      .url()
+      .default(fallback)
+      .transform((value) => value.replace(/\/+$/, "")),
+  );
 
 const envSchema = z.object({
   PORT: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(4000)),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, "DATABASE_URL must be a postgres:// connection string"),
+  /** Signs access and refresh tokens. Generate with: openssl rand -hex 32 */
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters (openssl rand -hex 32)"),
+  ACCESS_TOKEN_TTL_SECONDS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(60).default(900)),
+  REFRESH_TOKEN_DAYS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).default(30)),
+  /**
+   * Keys the admin and website servers send as `X-Api-Key`. Only requests with one of them may
+   * pass the visitor's address in `X-Client-IP` (used for rate limits).
+   */
+  ADMIN_API_KEY: optional(z.string().min(32, "ADMIN_API_KEY must be at least 32 characters")),
+  SITE_API_KEY: optional(z.string().min(32, "SITE_API_KEY must be at least 32 characters")),
+  /** The admin panel's origin, used to build invite links. */
+  ADMIN_URL: origin("http://localhost:3001"),
+  /** The website's origin, used to refresh its cache after saves. */
+  PUBLIC_SITE_URL: origin("http://localhost:3000"),
+  /** Shared with the website's /api/revalidate. */
+  REVALIDATE_SECRET: optional(z.string().min(16)),
   /** Comma-separated browser origins allowed by CORS. Empty = CORS off (server-to-server only). */
   CORS_ORIGINS: z.preprocess(
     emptyToUndefined,

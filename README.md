@@ -14,7 +14,7 @@ You need Node 20.9+ and Homebrew Postgres (`brew install postgresql@18`).
 ```bash
 npx npm@latest install      # the npm bundled with Node 22.23 crashes on this dependency tree
 npm run db:local            # start the private Postgres on port 54329 (shared with the admin's)
-cp .env.example .env.local
+cp .env.example .env.local  # then set JWT_SECRET (openssl rand -hex 32)
 npm run db:migrate          # create or update the tables
 npm run start:dev           # http://localhost:4000
 ```
@@ -29,6 +29,7 @@ npm run start:dev           # http://localhost:4000
 | `npm run db:generate` | Create a migration after editing `src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` (this repo is the only one that migrates) |
 | `npm run db:studio` | Drizzle Studio |
+| `npm run admin:create -- email "Name" [--reset]` | Create the first super admin, or reset someone's password (they become a super admin), with a temporary password |
 | `npm test` | Unit tests (`src/**/*.spec.ts`) |
 | `npm run test:e2e` | HTTP tests against the `blognest_test` database (`test/**/*.e2e-spec.ts`) |
 | `npm run check` | Lint, typecheck, unit tests, e2e tests, build |
@@ -41,14 +42,23 @@ src/
   app.setup.ts       helmet, trust proxy, error filter, CORS, Swagger (shared with e2e tests)
   config/env.ts      Zod-validated environment
   db/                schema.ts, migrations/, client.ts, DbModule (@InjectDb())
-  common/            ApiError, ErrorFilter, ZodPipe + @ApiZodBody/@ApiZodQuery, request logger
+  common/            ApiError, ErrorFilter, ZodPipe + @ApiZodBody/@ApiZodQuery, request logger,
+                     rate limits, audit log, website revalidation, client IP / server keys
+  auth/              login, refresh, logout, me, change password; AuthGuard + @Public/@Roles/@CurrentUser
+  users/             staff users and invites (staff and company)
+  companies/         companies, their people and job stats
   shared/            Zod rules and visibility rules (isPubliclyVisible, isJobVisible)
   health/            GET /health
 test/                e2e tests + helpers (test DB, app factory)
 ```
+
+## Auth in one paragraph
+
+`POST /auth/login` returns a 15-minute access token and a 30-day refresh token. Send `Authorization: Bearer <access>` on every call. When you get a 401, call `POST /auth/refresh` once with the refresh token. Each refresh returns a new pair, and the old refresh token stops working 30 seconds later. Every route needs a token unless it's marked `@Public()`. The admin and website servers also send `X-Api-Key` and the visitor's `X-Client-IP`, which the rate limits use.
 
 ## Conventions
 
 - ESM with `nodenext`: relative imports end in `.js`.
 - Validate every input with Zod: `@Body(new ZodPipe(schema))` plus `@ApiZodBody(schema)` so it shows in `/docs`.
 - Errors are always `{ error: { code, message, fields? } }`. Throw `ApiError` for expected failures.
+- Every write that changes something visible: check the role, validate, write, `AuditService.log(...)`, then `RevalidateSiteService.revalidate(...)` when the website shows it.
