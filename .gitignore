@@ -1,0 +1,21 @@
+# dependencies
+/node_modules
+
+# build
+/dist
+*.tsbuildinfo
+
+# testing
+/coverage
+
+# env files
+.env*
+!.env.example
+
+# local database and uploads
+/.data
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*

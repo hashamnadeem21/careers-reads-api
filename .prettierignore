@@ -1,0 +1,4 @@
+src/db/schema.ts
+src/db/migrations
+src/shared/**/*.ts
+!src/shared/**/*.spec.ts
