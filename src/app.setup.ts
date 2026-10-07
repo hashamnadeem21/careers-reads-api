@@ -23,6 +23,7 @@ export function setupApp(app: NestExpressApplication): INestApplication {
     .setDescription("Backend for the Career Reads website and admin panel.")
     .setVersion("1.0")
     .addBearerAuth()
+    .addApiKey({ type: "apiKey", in: "header", name: "x-api-key" }, "api-key")
     .build();
   SwaggerModule.setup("docs", app, () => SwaggerModule.createDocument(app, config), {
     jsonDocumentUrl: "docs-json",
