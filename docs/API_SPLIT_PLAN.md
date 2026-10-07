@@ -12,7 +12,7 @@ Today the admin and the website both connect straight to Postgres and keep their
 
 The plan is split into **8 phases**. Each phase is one work session: follow the brief, do it **in the repo it names**, check the result, commit, then start the next phase. Don't skip phases. Until Phase 7 is done, the admin keeps using the database directly, so nothing breaks in the meantime.
 
-> **Status (7 Oct 2026):** Phases 1–4 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phases 5–7 are next. See "Implementation notes" at the end.
+> **Status (7 Oct 2026):** Phases 1–5 are built, plus the API part of Phase 8 (Dockerfile, CI, README). Phases 6–7 are next. Production API: `https://api-careersreads.com`. See "Implementation notes" at the end.
 
 > **Next.js 16 reminder:** prompts for the admin and website say to read `node_modules/next/dist/docs/` first (`proxy.ts` instead of `middleware.ts`, and `params`, `searchParams`, `headers()` and `cookies()` are all awaited).
 
@@ -89,7 +89,7 @@ Every admin write goes through one service method that (1) checks role and scope
 
 ## Hosting
 
-The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `api.careersreads.com`. The admin and website stay on Vercel.
+The API is a long-running Node server, so host it on **Railway, Render or Fly** (or a VPS) rather than Vercel. Use `https://api-careersreads.com`. The admin and website stay on Vercel.
 
 ---
 
@@ -175,7 +175,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 
 ## Going live checklist
 
-- [ ] Deploy the API to Railway/Render/Fly at `api.careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
+- [ ] Deploy the API to Railway/Render/Fly at `api-careersreads.com` with `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`, `SITE_API_KEY`, `ADMIN_URL`, `REVALIDATE_SECRET`, `PUBLIC_SITE_URL`, `BLOB_READ_WRITE_TOKEN`.
 - [ ] Run `npm run db:migrate` from the API (the only repo that migrates from now on).
 - [ ] Website (Vercel): remove `DATABASE_URL`, add `API_URL` + `SITE_API_KEY`. Redeploy **before** the admin.
 - [ ] Admin (Vercel): remove `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`, add `API_URL` + `ADMIN_API_KEY`. Redeploy.
@@ -218,5 +218,14 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - Reads keep `unstable_cache` with the same tags (the site doesn't use Cache Components), so `/api/revalidate` works unchanged.
 - `CACHE_TAGS` moved to `src/lib/cache-tags.ts`; `hasDatabase()` became `hasApi()`.
 
+### Phase 5
+- `PostsModule`, `JobsModule`, `MediaModule`. Posts and jobs are keyed by **slug** (the `:id` in the endpoint map). Extra read routes: `GET /posts/options` (blog categories + authors), `GET /jobs/options` (job categories), `GET /jobs/review-count` (staff badge). `GET /jobs/:slug` returns `{ job, stats: { views, applies } }`. Lists return `{ rows, total, page, pageSize, counts }`, so a list page is one call.
+- **Posts:** `POST /posts` and `PATCH /posts/:slug` take the editor's fields plus `intent` (`draft`, `publish`, `schedule` + `scheduleAt`, `update`, `unpublish`, `autosave`). Success returns `{ slug, status, publishedAt, savedAt, message, siteRefreshed, missingSections }`. Failed checks are `400 validation_failed` with `fields` keyed like the admin's (`images.0.alt`, `coverImage: "Choose a hero image"`, …). Autosaving a live post is `409 autosave_published`. The MDX body check (`@mdx-js/mdx` + `remarkSafeMdx`) runs in the API.
+- **Jobs:** the body is the job form as JSON (strings, blank = not set, lists as arrays, `postedAt`/`deadline` as `YYYY-MM-DD` or ISO, `companyId` for staff). Success returns `{ job, notice, message }`, where `notice` is `submitted`, `saved` or `saved-offline` (the admin's redirect `?notice=`). Jobs another company owns are always `404`. Approve/reject on a job that isn't waiting is `409 not_pending`.
+- **Media:** `POST /media` is multipart (`files`, up to 20, plus `alt`). It returns `{ uploaded, errors }` per file, like the admin did. A file over 5 MB fails the whole request with `413 file_too_large` (multer's limit), and the upload rate limit (60 per 10 minutes) is a `429`. Usage is by id (`GET /media/:id/usage`). `DELETE` on an image in use is `409 in_use` with `error.details.usage`, a new optional field on the error body. Storage: Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set, otherwise `UPLOADS_DIR`.
+- Not ported (they stay in the admin as UI code): `renderPostPreview`, `lib/posts/outline.ts` (it needs `shared/content/toc.ts`, so Phase 7 must keep a copy of that file when it deletes `src/shared/`), `lib/jobs/form-values.ts`.
+- A post or job whose slug is `options`, `review-count` or `bulk` can't be opened by slug. No such slugs exist.
+
 ### Phase 8 (API part)
+- Production URL is `https://api-careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.
 - `Dockerfile` (multi-stage, health check), `.github/workflows/check.yml` (Postgres 18 service, `npm run check`), `TRUST_PROXY` env (default 1), CORS still off unless `CORS_ORIGINS` is set, README with the env table and the go-live checklist.

@@ -29,10 +29,17 @@ export async function createUser(
   return user;
 }
 
-export async function createCompany(db: Database, input: { name?: string; active?: boolean } = {}) {
+export async function createCompany(
+  db: Database,
+  input: { name?: string; active?: boolean; autoPublish?: boolean } = {},
+) {
   const [company] = await db
     .insert(companies)
-    .values({ name: input.name ?? `Company ${randomUUID().slice(0, 8)}`, active: input.active ?? true })
+    .values({
+      name: input.name ?? `Company ${randomUUID().slice(0, 8)}`,
+      active: input.active ?? true,
+      autoPublish: input.autoPublish ?? false,
+    })
     .returning();
   return company;
 }
