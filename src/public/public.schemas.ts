@@ -27,7 +27,7 @@ export const contactSchema = z.object({
   message: z
     .string()
     .trim()
-    .min(20, "Please write at least 20 characters.")
+    .min(1, "Please write your message.")
     .max(5000, "Please keep your message under 5,000 characters.")
     .refine((m) => (m.match(/https?:\/\//gi) ?? []).length <= 3, "Please include no more than three links."),
 });
