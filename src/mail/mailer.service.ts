@@ -11,6 +11,17 @@ export interface OutgoingEmail {
 
 export type BatchResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Resend's errors in plain words where they're confusing. The shared test sender (…@resend.dev)
+ * can only email the Resend account's own address, but Resend reports that as an "invalid `to`".
+ */
+export function explainResendError(message: string, from: string): string {
+  if (/@resend\.dev>?\s*$/i.test(from) && /invalid `?to`? field|testing email|own email address/i.test(message)) {
+    return "Resend's test sender (onboarding@resend.dev) can only email the address you signed up to Resend with. Verify your domain in Resend and set NEWSLETTER_FROM to an address on it to email anyone else.";
+  }
+  return message;
+}
+
 /** Resend accepts up to 100 emails per batch call. */
 export const MAX_BATCH = 100;
 
@@ -66,7 +77,7 @@ export class MailerService {
       });
       if (response.ok) return { ok: true };
       const body = (await response.json().catch(() => null)) as { message?: string } | null;
-      const error = body?.message ?? `Resend answered ${response.status}.`;
+      const error = explainResendError(body?.message ?? `Resend answered ${response.status}.`, NEWSLETTER_FROM);
       this.logger.error(`Batch of ${emails.length} failed: ${error}`);
       return { ok: false, error };
     } catch (error) {
