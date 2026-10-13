@@ -2,7 +2,7 @@ import { and, count, desc, eq, gt, lte, sql, type SQL } from "drizzle-orm";
 import { articleState, type ContentState, daysLeft, jobState } from "../common/content-state.js";
 import { isProduction } from "../config/env.js";
 import type { Database } from "../db/client.js";
-import { articles, auditLog, categories, jobs, messages, subscribers, users } from "../db/schema.js";
+import { articles, auditLog, categories, jobs, liveVisitors, messages, subscribers, users } from "../db/schema.js";
 
 /**
  * Dashboard numbers (port of the admin's `lib/dashboard/queries.ts`). Everything comes from
@@ -83,21 +83,38 @@ export async function getStatCards(db: Database) {
 
 export interface TrafficPoint {
   day: string;
+  /** People who opened the site (once per browser tab session). */
+  visits: number;
   views: number;
   applies: number;
 }
 
-/** Daily page views and apply clicks for the last 365 days (zeros filled in). The admin buckets them by range. */
+/** Daily site visits, article/job page views and apply clicks for the last 365 days (zeros filled in). The admin buckets them by range. */
 export async function getTraffic(db: Database): Promise<{ points: TrafficPoint[]; total: number }> {
-  const result = await db.execute<{ day: string; views: number; applies: number }>(sql`
+  const result = await db.execute<{ day: string; visits: number; views: number; applies: number }>(sql`
     select to_char(d.day, 'YYYY-MM-DD') as day,
+      coalesce(sum(s.count) filter (where s.kind = 'visit'), 0)::int as visits,
       coalesce(sum(s.count) filter (where s.kind = 'view'), 0)::int as views,
       coalesce(sum(s.count) filter (where s.kind = 'apply_click'), 0)::int as applies
     from generate_series((now() at time zone 'utc')::date - 364, (now() at time zone 'utc')::date, '1 day') d(day)
     left join daily_stats s on s.day = d.day
     group by d.day order by d.day`);
-  const points = result.rows.map((r) => ({ day: r.day, views: Number(r.views), applies: Number(r.applies) }));
-  return { points, total: points.reduce((n, p) => n + p.views + p.applies, 0) };
+  const points = result.rows.map((r) => ({
+    day: r.day,
+    visits: Number(r.visits),
+    views: Number(r.views),
+    applies: Number(r.applies),
+  }));
+  return { points, total: points.reduce((n, p) => n + p.visits + p.views + p.applies, 0) };
+}
+
+/** Tabs open on the site right now: a heartbeat in the last 45 seconds (tabs ping every 20). */
+export async function getOnlineNow(db: Database): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(liveVisitors)
+    .where(sql`${liveVisitors.lastSeen} > now() - interval '45 seconds'`);
+  return row?.n ?? 0;
 }
 
 /** Job page views in the last 30 days, grouped by job category. */

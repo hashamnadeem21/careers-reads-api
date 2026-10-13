@@ -17,6 +17,7 @@ const TABLES = [
   "user_prefs",
   "audit_log",
   "daily_stats",
+  "live_visitors",
   "rate_limits",
   "media",
   "messages",

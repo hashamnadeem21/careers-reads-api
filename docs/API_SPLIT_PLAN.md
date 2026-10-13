@@ -78,9 +78,9 @@ Every admin write goes through one service method that (1) checks role and scope
 | Newsletters | `GET/POST /newsletters`, `POST /newsletters/preview`, `GET /newsletters/audience`, `GET/PATCH/DELETE /newsletters/:id`, `POST /newsletters/:id/{test,send,retry,schedule}`, `DELETE /newsletters/:id/schedule` |
 | Automations | `GET/POST /automations`, `GET/PATCH/DELETE /automations/:id`, `POST /automations/:id/{status,test,retry}` |
 | Settings | `GET/PUT /settings` |
-| Dashboard | `GET /dashboard`, `GET /dashboard/badges`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
+| Dashboard | `GET /dashboard`, `GET /dashboard/badges`, `GET /dashboard/live`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
 | Search | `GET /search?q=` |
-| Public (website) | `GET /public/articles`, `/public/articles/:slug`, `/public/jobs`, `/public/jobs/:slug`, `/public/categories`, `/public/authors`, `/public/settings`; `POST /public/contact`, `/public/subscribe`, `/public/stats` |
+| Public (website) | `GET /public/articles`, `/public/articles/:slug`, `/public/jobs`, `/public/jobs/:slug`, `/public/categories`, `/public/authors`, `/public/settings`; `POST /public/contact`, `/public/subscribe`, `/public/stats`, `/public/presence` |
 
 `renderPostPreview` **stays in the admin**. It only renders MDX and never touches the database.
 
@@ -212,7 +212,7 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 - `PublicModule` (`src/public/`). Rows are mapped with the same Zod schemas as the website's files (`mappers.ts`); a bad row is skipped and logged, never fatal.
 - `GET /public/articles` returns full articles (the website's search needs the body); `?view=summary` drops the body and table of contents. `GET /public/authors/:slug` was added next to the list.
 - `?preview=1` without the site key is a **403**, not silently ignored. Jobs have no preview: draft, future and expired jobs are never returned.
-- `@SiteOnly()` (`common/site-key.guard.ts`) marks the writes: `POST /public/contact`, `/public/subscribe`, `/public/stats`, all `204`. Limits per visitor (`X-Client-IP`): contact 3 and subscribe 5 per 10 minutes, stats 120 per minute. The website keeps its honeypot, fill-time check and email/webhook delivery.
+- `@SiteOnly()` (`common/site-key.guard.ts`) marks the writes: `POST /public/contact`, `/public/subscribe`, `/public/stats`, `/public/presence`, all `204`. Limits per visitor (`X-Client-IP`): contact 3 and subscribe 5 per 10 minutes, stats 120 and presence 60 per minute. Stats also take `{ path: "/", kind: "visit" }` (one per browser tab session); presence heartbeats (`{ id, leave? }`, a random per-tab id, no cookie) feed `GET /dashboard/live`. The website keeps its honeypot, fill-time check and email/webhook delivery.
 - Stats read the visitor's user agent from `X-Client-User-Agent` for the bot filter, and only count pages that are live.
 - `RevalidateSiteService` (Phase 2) is the port of the admin's `revalidate-site.ts`.
 

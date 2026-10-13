@@ -36,7 +36,12 @@ export const subscribeSchema = z.object({ email: emailField });
 
 export const statsSchema = z
   .object({
-    path: z.string().regex(/^\/(blog|jobs)\/[a-z0-9]+(?:-[a-z0-9]+)*$/),
-    kind: z.enum(["view", "apply_click"]),
+    /** An article or job page, or "/" for a site visit. */
+    path: z.string().regex(/^(\/|\/(blog|jobs)\/[a-z0-9]+(?:-[a-z0-9]+)*)$/),
+    /** `visit` = someone opened the site (once per browser tab session, any page). */
+    kind: z.enum(["view", "apply_click", "visit"]),
   })
   .strict();
+
+/** A heartbeat from an open tab, or `leave: true` when it closes or goes to the background. */
+export const presenceSchema = z.object({ id: z.uuid(), leave: z.boolean().optional() }).strict();

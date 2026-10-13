@@ -2,7 +2,7 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { sql } from "drizzle-orm";
 import request from "supertest";
 import type { DbConnection } from "../src/db/client.js";
-import { messages, settings, subscribers } from "../src/db/schema.js";
+import { liveVisitors, messages, settings, subscribers } from "../src/db/schema.js";
 import { createTestApp } from "./helpers/app.js";
 import { asSiteServer, createArticle, createAuthor, createCategory, createJob, daysFromNow } from "./helpers/seed.js";
 import { connectTestDb, resetTestDb } from "./helpers/test-db.js";
@@ -39,7 +39,13 @@ describe("public reads", () => {
   it("lists only live articles, with reading time and table of contents", async () => {
     const res = await http().get("/public/articles").expect(200);
     expect(res.body.map((a: { slug: string }) => a.slug)).toEqual(["live-post"]);
-    expect(res.body[0]).toMatchObject({ readingTimeMinutes: 1, toc: [{ id: "why-it-matters", depth: 2 }, { id: "details", depth: 3 }] });
+    expect(res.body[0]).toMatchObject({
+      readingTimeMinutes: 1,
+      toc: [
+        { id: "why-it-matters", depth: 2 },
+        { id: "details", depth: 3 },
+      ],
+    });
     const summary = await http().get("/public/articles?view=summary").expect(200);
     expect(summary.body[0].content).toBeUndefined();
   });
@@ -132,5 +138,32 @@ describe("public writes", () => {
       { path: "/blog/live-post", kind: "view", count: 2 },
       { path: "/jobs/live-job", kind: "apply_click", count: 1 },
     ]);
+  });
+
+  it("counts site visits on / only", async () => {
+    const site = { ...asSiteServer(), ...UA };
+    await http().post("/public/stats").set(site).send({ path: "/", kind: "visit" }).expect(204);
+    await http().post("/public/stats").set(site).send({ path: "/", kind: "visit" }).expect(204);
+    await http().post("/public/stats").set(site).send({ path: "/blog/live-post", kind: "visit" }).expect(400);
+    await http().post("/public/stats").set(site).send({ path: "/", kind: "view" }).expect(400);
+    const rows = await connection.db.execute<{ path: string; kind: string; count: number }>(
+      sql`select path, kind, count from daily_stats where path = '/'`,
+    );
+    expect(rows.rows).toEqual([{ path: "/", kind: "visit", count: 2 }]);
+  });
+
+  it("tracks who is on the site and drops tabs that leave", async () => {
+    const site = { ...asSiteServer(), ...UA };
+    const [a, b] = [crypto.randomUUID(), crypto.randomUUID()];
+    await http().post("/public/presence").set(site).send({ id: a }).expect(204);
+    await http().post("/public/presence").set(site).send({ id: a }).expect(204);
+    await http().post("/public/presence").set(site).send({ id: b }).expect(204);
+    await http().post("/public/presence").set(site).send({ id: "nope" }).expect(400);
+    await http().post("/public/presence").send({ id: a }).expect(403);
+    const online = async () => (await connection.db.select().from(liveVisitors)).map((r) => r.id).sort();
+    expect(await online()).toEqual([a, b].sort());
+
+    await http().post("/public/presence").set(site).send({ id: b, leave: true }).expect(204);
+    expect(await online()).toEqual([a]);
   });
 });

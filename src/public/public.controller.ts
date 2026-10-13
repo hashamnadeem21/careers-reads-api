@@ -12,6 +12,7 @@ import {
   articleQuerySchema,
   articlesQuerySchema,
   contactSchema,
+  presenceSchema,
   statsSchema,
   subscribeSchema,
 } from "./public.schemas.js";
@@ -115,5 +116,16 @@ export class PublicController {
   async stats(@Req() request: Request, @Body(new ZodPipe(statsSchema)) body: z.infer<typeof statsSchema>) {
     const userAgent = request.header("x-client-user-agent") ?? request.header("user-agent") ?? "";
     await this.content.recordStat(clientIp(request), userAgent, body);
+  }
+
+  /** Heartbeats from open tabs, for the admin's "Online now" count. */
+  @Post("presence")
+  @SiteOnly()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiHeader({ name: "x-client-user-agent", required: false })
+  @ApiZodBody(presenceSchema)
+  async presence(@Req() request: Request, @Body(new ZodPipe(presenceSchema)) body: z.infer<typeof presenceSchema>) {
+    const userAgent = request.header("x-client-user-agent") ?? request.header("user-agent") ?? "";
+    await this.content.recordPresence(clientIp(request), userAgent, body);
   }
 }

@@ -26,20 +26,23 @@ export class DashboardController {
   /** Everything the dashboard shows, plus this user's card layout. Traffic is 365 daily points. */
   @Get()
   async dashboard(@CurrentUser() user: AuthUser) {
-    const [stats, traffic, topCategories, mix, recent, lists, featured, activity, [prefs]] = await Promise.all([
-      queries.getStatCards(this.db),
-      queries.getTraffic(this.db),
-      queries.getTopJobCategories(this.db),
-      queries.getContentMix(this.db),
-      queries.getRecentContent(this.db),
-      queries.getWorkLists(this.db),
-      queries.getFeaturedJob(this.db),
-      queries.getActivity(this.db, 8),
-      this.db.select().from(userPrefs).where(eq(userPrefs.userId, user.id)).limit(1),
-    ]);
+    const [stats, traffic, onlineNow, topCategories, mix, recent, lists, featured, activity, [prefs]] =
+      await Promise.all([
+        queries.getStatCards(this.db),
+        queries.getTraffic(this.db),
+        queries.getOnlineNow(this.db),
+        queries.getTopJobCategories(this.db),
+        queries.getContentMix(this.db),
+        queries.getRecentContent(this.db),
+        queries.getWorkLists(this.db),
+        queries.getFeaturedJob(this.db),
+        queries.getActivity(this.db, 8),
+        this.db.select().from(userPrefs).where(eq(userPrefs.userId, user.id)).limit(1),
+      ]);
     return {
       stats,
       traffic,
+      onlineNow,
       topCategories,
       mix,
       recent,
@@ -48,6 +51,12 @@ export class DashboardController {
       activity,
       layout: resolveLayout(prefs?.dashboardLayout),
     };
+  }
+
+  /** People on the site right now; the dashboard polls this. */
+  @Get("live")
+  async live(): Promise<{ onlineNow: number }> {
+    return { onlineNow: await queries.getOnlineNow(this.db) };
   }
 
   /** Sidebar counters: unread messages and company jobs waiting for review. */
