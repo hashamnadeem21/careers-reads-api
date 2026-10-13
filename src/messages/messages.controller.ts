@@ -43,7 +43,7 @@ export class MessagesController {
 export class SubscribersController {
   constructor(private readonly messages: MessagesService) {}
 
-  /** Newest 500 subscribers, with `unread` and `subscribers` counts. */
+  /** Newest 500 subscribers, with `unread` and `subscribers` (active only) counts. */
   @Get()
   list() {
     return this.messages.listSubscribers();

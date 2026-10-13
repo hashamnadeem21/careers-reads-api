@@ -15,6 +15,20 @@
       "when": 1791201921074,
       "tag": "0001_roles_and_companies",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791877789988,
+      "tag": "0002_newsletters",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791888911115,
+      "tag": "0003_automations",
+      "breakpoints": true
     }
   ]
 }

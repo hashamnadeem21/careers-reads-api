@@ -1,5 +1,6 @@
 import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { AuthModule } from "./auth/auth.module.js";
+import { AutomationsModule } from "./automations/automations.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { RequestLoggerMiddleware } from "./common/request-logger.middleware.js";
 import { CompaniesModule } from "./companies/companies.module.js";
@@ -12,7 +13,9 @@ import { AuthorsModule } from "./authors/authors.module.js";
 import { CategoriesModule } from "./categories/categories.module.js";
 import { DashboardModule } from "./dashboard/dashboard.module.js";
 import { MessagesModule } from "./messages/messages.module.js";
+import { NewslettersModule } from "./newsletters/newsletters.module.js";
 import { PreferencesModule } from "./preferences/preferences.module.js";
+import { SchedulerModule } from "./scheduler/scheduler.module.js";
 import { SearchModule } from "./search/search.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
 import { HealthController } from "./health/health.controller.js";
@@ -31,6 +34,9 @@ import { UsersModule } from "./users/users.module.js";
     CategoriesModule,
     AuthorsModule,
     MessagesModule,
+    NewslettersModule,
+    AutomationsModule,
+    SchedulerModule,
     SettingsModule,
     DashboardModule,
     SearchModule,

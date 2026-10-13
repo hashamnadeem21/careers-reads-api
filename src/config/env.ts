@@ -47,6 +47,18 @@ const envSchema = z.object({
   UPLOADS_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
   /** Production refuses local uploads unless this is "true" (e2e runs of a production build). */
   ALLOW_LOCAL_UPLOADS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("false")),
+  /** Resend (https://resend.com) API key. Without it newsletters can be written but not sent. */
+  RESEND_API_KEY: optional(z.string().min(1)),
+  /** Newsletter sender on a domain verified in Resend, e.g. "Career Reads <newsletter@careersreads.com>". */
+  NEWSLETTER_FROM: optional(z.string().min(3)),
+  /** Where replies to a newsletter go (e.g. contact@careersreads.com). */
+  NEWSLETTER_REPLY_TO: optional(z.email()),
+  /** Postal address in every newsletter's footer (anti-spam laws ask for one). */
+  NEWSLETTER_POSTAL_ADDRESS: optional(z.string().max(300)),
+  /** This API's public URL (e.g. https://api.careersreads.com): unsubscribe links point here. */
+  API_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
+  /** Runs the every-minute scheduler (scheduled newsletters, automation emails). Tests turn it off. */
+  SCHEDULER_ENABLED: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("true")),
   /** Comma-separated browser origins allowed by CORS. Empty = CORS off (server-to-server only). */
   CORS_ORIGINS: z.preprocess(
     emptyToUndefined,

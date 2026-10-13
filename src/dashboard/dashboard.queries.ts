@@ -47,7 +47,9 @@ export async function getStatCards(db: Database) {
   const postsAt = (t: SQL) =>
     sql`select count(*) from ${articles} where ${articles.status} = 'published' and ${articles.publishedAt} <= ${t}`;
   const jobsAt = (t: SQL) => sql`select count(*) from ${jobs} where ${jobVisibleAt(t)}`;
-  const subsAt = (t: SQL) => sql`select count(*) from ${subscribers} where ${subscribers.createdAt} <= ${t}`;
+  // Subscribed by then and not yet unsubscribed.
+  const subsAt = (t: SQL) =>
+    sql`select count(*) from ${subscribers} where ${subscribers.createdAt} <= ${t} and (${subscribers.unsubscribedAt} is null or ${subscribers.unsubscribedAt} > ${t})`;
 
   const [posts, jobsSpark, subs, [{ unread }], messagesPerDay, prevRows] = await Promise.all([
     cumulativeSeries(db, postsAt),
@@ -283,6 +285,8 @@ const entityHref: Record<string, (slug: string) => string> = {
   settings: () => "/settings",
   user: () => "/users",
   company: (id) => `/companies/${id}`,
+  newsletter: (id) => `/newsletters/${id}`,
+  automation: (id) => `/automations/${id}`,
 };
 
 export async function getActivity(db: Database, limit = 8, offset = 0): Promise<ActivityItem[]> {

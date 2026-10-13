@@ -20,6 +20,10 @@ const TABLES = [
   "rate_limits",
   "media",
   "messages",
+  "automation_deliveries",
+  "email_automations",
+  "newsletter_deliveries",
+  "newsletters",
   "subscribers",
   "settings",
   "articles",
@@ -38,6 +42,8 @@ export async function connectTestDb(): Promise<DbConnection> {
   process.env.ADMIN_API_KEY = TEST_ADMIN_API_KEY;
   process.env.SITE_API_KEY = TEST_SITE_API_KEY;
   process.env.REVALIDATE_SECRET = "";
+  process.env.SCHEDULER_ENABLED = "false"; // tests run the scheduler by hand
+
   resetEnvCache();
   const connection = connectDb(TEST_DATABASE_URL);
   await migrate(connection.db, { migrationsFolder: path.join(process.cwd(), "src/db/migrations") });

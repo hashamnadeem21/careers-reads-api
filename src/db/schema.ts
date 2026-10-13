@@ -18,6 +18,7 @@ import {
   serial,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -34,6 +35,13 @@ export const categoryKind = pgEnum("category_kind", ["blog", "job"]);
 export const authorType = pgEnum("author_type", ["Person", "Organization"]);
 export const statKind = pgEnum("stat_kind", ["view", "apply_click"]);
 export const themePref = pgEnum("theme_pref", ["light", "dark", "system"]);
+/** draft → sending (deliveries going out) → sent. */
+export const newsletterStatus = pgEnum("newsletter_status", ["draft", "scheduled", "sending", "sent"]);
+export const deliveryStatus = pgEnum("delivery_status", ["pending", "sent", "failed"]);
+/** What starts an automation. More triggers can be added later. */
+export const automationTrigger = pgEnum("automation_trigger", ["subscribed"]);
+/** skipped: they unsubscribed, the automation was switched off, or it was days overdue. */
+export const automationDeliveryStatus = pgEnum("automation_delivery_status", ["pending", "sent", "failed", "skipped"]);
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -221,8 +229,116 @@ export const subscribers = pgTable("subscribers", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   confirmed: boolean("confirmed").notNull().default(false),
+  /** Secret in every newsletter's unsubscribe link. Never sent to the admin. */
+  unsubscribeToken: uuid("unsubscribe_token").notNull().unique().defaultRandom(),
+  /** Set when they unsubscribe; they get no newsletters until they sign up again. */
+  unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+/** Newsletters written in the admin (Markdown body), sent now or at a scheduled time to an audience. */
+export const newsletters = pgTable(
+  "newsletters",
+  {
+    id: serial("id").primaryKey(),
+    subject: text("subject").notNull(),
+    /** The grey line inboxes show after the subject. */
+    previewText: text("preview_text").notNull().default(""),
+    body: text("body").notNull().default(""),
+    status: newsletterStatus("status").notNull().default("draft"),
+    /** When a scheduled newsletter goes out (status "scheduled"). */
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    /** Audience: active subscribers who signed up in [from, to). Both null = everyone active. */
+    audienceFrom: timestamp("audience_from", { withTimezone: true }),
+    audienceTo: timestamp("audience_to", { withTimezone: true }),
+    /** Counters, kept in step with newsletter_deliveries while sending. */
+    recipients: integer("recipients").notNull().default(0),
+    sentCount: integer("sent_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    sentBy: uuid("sent_by").references(() => users.id, { onDelete: "set null" }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("newsletters_created_idx").on(t.createdAt.desc()),
+    index("newsletters_status_scheduled_idx").on(t.status, t.scheduledAt),
+  ],
+);
+
+/** One row per subscriber per sent newsletter, so a resumed send never emails anyone twice. */
+export const newsletterDeliveries = pgTable(
+  "newsletter_deliveries",
+  {
+    newsletterId: integer("newsletter_id")
+      .notNull()
+      .references(() => newsletters.id, { onDelete: "cascade" }),
+    subscriberId: integer("subscriber_id")
+      .notNull()
+      .references(() => subscribers.id, { onDelete: "cascade" }),
+    status: deliveryStatus("status").notNull().default("pending"),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.newsletterId, t.subscriberId] }),
+    index("newsletter_deliveries_status_idx").on(t.newsletterId, t.status),
+  ],
+);
+
+/**
+ * Emails sent automatically when something happens (e.g. the welcome email when someone
+ * subscribes), optionally after a delay. Only works between `startsAt` and `endsAt` while active.
+ */
+export const emailAutomations = pgTable("email_automations", {
+  id: serial("id").primaryKey(),
+  /** Admin-facing name, e.g. "Welcome email". */
+  name: text("name").notNull(),
+  trigger: automationTrigger("trigger").notNull().default("subscribed"),
+  /** How long after the trigger it's sent (0 = straight away). */
+  delayMinutes: integer("delay_minutes").notNull().default(0),
+  subject: text("subject").notNull(),
+  previewText: text("preview_text").notNull().default(""),
+  body: text("body").notNull().default(""),
+  active: boolean("active").notNull().default(false),
+  /** Launch date: only triggers from here on count. Null = as soon as it's switched on. */
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One row per subscriber per automation, queued when the trigger happens and sent by the
+ * scheduler once `dueAt` passes. The unique pair means nobody gets the same automation twice.
+ */
+export const automationDeliveries = pgTable(
+  "automation_deliveries",
+  {
+    id: serial("id").primaryKey(),
+    automationId: integer("automation_id")
+      .notNull()
+      .references(() => emailAutomations.id, { onDelete: "cascade" }),
+    subscriberId: integer("subscriber_id")
+      .notNull()
+      .references(() => subscribers.id, { onDelete: "cascade" }),
+    status: automationDeliveryStatus("status").notNull().default("pending"),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    /** Set while a scheduler run is sending it, so a second run (or API instance) skips it. */
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("automation_deliveries_once").on(t.automationId, t.subscriberId),
+    index("automation_deliveries_due_idx").on(t.dueAt).where(sql`${t.status} = 'pending'`),
+    index("automation_deliveries_automation_idx").on(t.automationId, t.createdAt.desc()),
+  ],
+);
 
 export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
@@ -298,6 +414,10 @@ export type AuthorRow = typeof authors.$inferSelect;
 export type MediaRow = typeof media.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type SubscriberRow = typeof subscribers.$inferSelect;
+export type NewsletterRow = typeof newsletters.$inferSelect;
+export type NewsletterStatus = (typeof newsletterStatus.enumValues)[number];
+export type AutomationRow = typeof emailAutomations.$inferSelect;
+export type AutomationDeliveryStatus = (typeof automationDeliveryStatus.enumValues)[number];
 export type CompanyRow = typeof companies.$inferSelect;
 export type Role = (typeof userRole.enumValues)[number];
 export type JobReview = (typeof jobReview.enumValues)[number];

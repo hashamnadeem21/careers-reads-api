@@ -194,8 +194,8 @@ describe("messages and subscribers", () => {
     expect(csv.headers["content-type"]).toMatch(/^text\/csv/);
     expect(csv.headers["content-disposition"]).toMatch(/attachment; filename="blognest-subscribers-/);
     const lines = csv.text.trim().split("\n");
-    expect(lines[0]).toBe("email,confirmed,subscribed_at");
-    expect(lines[2]).toMatch(/^"'=cmd@example.com",no,/);
+    expect(lines[0]).toBe("email,status,subscribed_at,unsubscribed_at");
+    expect(lines[2]).toMatch(/^"'=cmd@example.com",subscribed,/);
 
     const subs = await http().get("/subscribers").set(editor).expect(200);
     const removed = await http()
