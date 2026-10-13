@@ -34,7 +34,7 @@ export const jobSchema = z
     experience: z.enum(EXPERIENCE_LEVELS),
     /** Free text, e.g. "PKR 80,000 – 120,000 / month". Leave out if not disclosed. */
     salary: z.string().trim().min(2).max(80).optional(),
-    summary: z.string().trim().min(30).max(240),
+    summary: z.string().trim().min(30),
     responsibilities: listItems.default([]),
     requirements: listItems.default([]),
     benefits: listItems.default([]),
