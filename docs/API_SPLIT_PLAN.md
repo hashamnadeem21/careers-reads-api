@@ -75,6 +75,8 @@ Every admin write goes through one service method that (1) checks role and scope
 | Companies | `GET/POST /companies`, `PATCH/DELETE /companies/:id`, `POST /companies/:id/active`, `POST /companies/:id/invites` |
 | Users | `GET /users`, `PATCH /users/:id/role`, `DELETE /users/:id`, `POST /invites`, `DELETE /invites?email=`, `GET /invites/:token`, `POST /invites/:token/accept` |
 | Messages | `GET /messages`, `PATCH /messages/:id`, `DELETE /messages/:id`, `GET /subscribers`, `DELETE /subscribers`, `GET /subscribers/export.csv` |
+| Newsletters | `GET/POST /newsletters`, `POST /newsletters/preview`, `GET /newsletters/audience`, `GET/PATCH/DELETE /newsletters/:id`, `POST /newsletters/:id/{test,send,retry,schedule}`, `DELETE /newsletters/:id/schedule` |
+| Automations | `GET/POST /automations`, `GET/PATCH/DELETE /automations/:id`, `POST /automations/:id/{status,test,retry}` |
 | Settings | `GET/PUT /settings` |
 | Dashboard | `GET /dashboard`, `GET /dashboard/badges`, `GET /activity`, `PUT /me/dashboard-layout`, `PUT /me/theme` |
 | Search | `GET /search?q=` |
@@ -248,3 +250,20 @@ The API is a long-running Node server, so host it on **Railway, Render or Fly** 
 ### Phase 8 (API part)
 - Production URL is `https://api.careersreads.com`. Website production deployments (`VERCEL_ENV=production`) default `API_URL` to it; the admin should do the same in Phase 7.
 - `Dockerfile` (multi-stage, health check), `.github/workflows/check.yml` (Postgres 18 service, `npm run check`), `TRUST_PROXY` env (default 1), CORS still off unless `CORS_ORIGINS` is set, README with the env table and the go-live checklist.
+
+### Newsletters (after Phase 8)
+- `NewslettersModule` (`src/newsletters/`): staff write drafts (`subject`, `previewText`, Markdown `body`), preview them (`POST /newsletters/preview` → `{ html }`) and send themselves a test. **Sending to everyone and retrying failures are super admin only.**
+- Tables: `newsletters` (status `draft` → `sending` → `sent`, with `recipients` / `sent_count` / `failed_count`) and `newsletter_deliveries` (one row per subscriber per send, `pending` → `sent` / `failed`). `subscribers` gained `unsubscribe_token` (never returned to the admin) and `unsubscribed_at`.
+- `POST /newsletters/:id/send` claims the draft, records a pending delivery for every active subscriber, and returns `202`; `NewsletterSender` delivers 100 per Resend batch call in the background. A restart resumes unfinished sends on boot without emailing anyone twice (delivery rows + Resend idempotency keys).
+- Email goes through `MailerService` (`src/mail/`, Resend). Without `RESEND_API_KEY`, `NEWSLETTER_FROM` and `API_PUBLIC_URL`, test sends and sends are `503 email_not_configured`; drafts still work. `render.ts` turns the Markdown into sanitised, inline-styled HTML plus a plain-text copy.
+- Unsubscribing: every email links to `GET /public/unsubscribe/:token` (a confirm page served by the API, so mail-filter link scanners can't unsubscribe anyone) and carries `List-Unsubscribe` + `List-Unsubscribe-Post` headers for one-click unsubscribe (RFC 8058, `POST` to the same URL). Signing up again on the website clears `unsubscribed_at`.
+- `subscribers` counts (Messages tab, dashboard card) only include active subscribers. The CSV export has `email,status,subscribed_at,unsubscribed_at`.
+
+### Scheduling, audiences and automations
+- **Audience:** `send` and `schedule` take `{ audience: { from?, to? } }`: active subscribers who signed up in `[from, to)`; both empty = everyone. `GET /newsletters/audience?from=&to=` returns `{ count }` for the admin's dialogs. Stored on the newsletter as `audience_from` / `audience_to`.
+- **Scheduled newsletters:** `POST /newsletters/:id/schedule { sendAt, audience }` (1 minute to 1 year ahead, super admin) sets status `scheduled`; it stays editable and can be sent now, rescheduled, or taken back to a draft with `DELETE /newsletters/:id/schedule`. Recipients are worked out when it goes out, not when it's scheduled.
+- **Automations** (`AutomationsModule`, `src/automations/`): `email_automations` holds an email (`subject`, `previewText`, `body`) plus a trigger (`subscribed` for now), a delay (`delay_minutes`, up to 90 days), a launch date (`starts_at`), an optional `ends_at`, and an `active` switch (super admin only, via `POST /automations/:id/status`). New automations start switched off; migration `0003` adds a "Welcome email" that is switched off.
+- `POST /public/subscribe` queues one `automation_deliveries` row per live `subscribed` automation (`AutomationQueue`). The unique `(automation_id, subscriber_id)` pair means nobody gets the same automation twice, even after unsubscribing and signing up again. People who subscribed before an automation was switched on don't get it.
+- **The scheduler** (`SchedulerModule`, `src/scheduler/`, `@nestjs/schedule` + `cron`) runs every minute and once on boot: `NewslettersService.startDue()` claims due scheduled newsletters (one transaction each) and hands them to `NewsletterSender`; `AutomationSender.sendDue()` claims due deliveries with `for update skip locked` and a 5-minute `locked_until`, then sends them 100 per Resend batch. Overlapping runs in one process share the run in flight; separate instances claim different rows. `SCHEDULER_ENABLED=false` turns it off (tests run it by hand with a fixed clock).
+- Automation emails that fail are retried 15 minutes later, 3 tries in total, then marked `failed` (`POST /automations/:id/retry` queues them again). A batch Resend rejects is retried one email at a time, so one bad address doesn't hold up the others. Emails are `skipped` when the person unsubscribed, the automation was switched off, or they are more than 3 days late (e.g. sending wasn't set up).
+- Known limit: a newsletter send interrupted by a restart is resumed by every instance that boots. Resend idempotency keys stop duplicate batches, but run a single instance if you can.

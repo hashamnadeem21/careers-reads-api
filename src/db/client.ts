@@ -13,6 +13,9 @@ export { schema };
  */
 export type Database = NodePgDatabase<typeof schema>;
 
+/** The `tx` inside `db.transaction(async (tx) => …)`. */
+export type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
 export interface DbConnection {
   db: Database;
   end: () => Promise<void>;

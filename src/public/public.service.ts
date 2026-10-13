@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import type { z } from "zod";
+import { AutomationQueue } from "../automations/automation-queue.service.js";
 import { ApiError } from "../common/api-error.js";
 import { limitKey, RateLimitService } from "../common/rate-limit.service.js";
 import type { Database } from "../db/client.js";
@@ -48,6 +49,7 @@ export class PublicService {
   constructor(
     @InjectDb() private readonly db: Database,
     private readonly rateLimit: RateLimitService,
+    private readonly automations: AutomationQueue,
   ) {}
 
   /** Newest first. With `preview`, drafts and scheduled posts are included. */
@@ -131,7 +133,11 @@ export class PublicService {
       .values({ name: input.name, email: input.email, topic: input.topic || null, message: input.message });
   }
 
-  /** Adds a newsletter subscriber (signing up twice is fine). 5 per visitor per 10 minutes. */
+  /**
+   * Adds a newsletter subscriber. Signing up twice is fine; signing up after unsubscribing turns
+   * newsletters back on. Queues the "when someone subscribes" automations (the welcome email),
+   * each at most once per person. 5 per visitor per 10 minutes.
+   */
   async subscribe(ip: string, email: string): Promise<void> {
     await this.rateLimit.enforce(
       limitKey("newsletter", ip),
@@ -139,10 +145,12 @@ export class PublicService {
       FORM_WINDOW_SECONDS,
       "Too many attempts. Please try again in a few minutes.",
     );
-    await this.db
+    const [subscriber] = await this.db
       .insert(subscribers)
       .values({ email: email.toLowerCase() })
-      .onConflictDoNothing({ target: subscribers.email });
+      .onConflictDoUpdate({ target: subscribers.email, set: { unsubscribedAt: null } })
+      .returning({ id: subscribers.id });
+    await this.automations.subscribed(subscriber.id);
   }
 
   /**

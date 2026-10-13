@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
-import { asc, count, desc, eq, inArray } from "drizzle-orm";
+import { asc, count, desc, eq, getTableColumns, inArray, isNull } from "drizzle-orm";
 import type { AuthUser } from "../auth/auth-user.js";
 import { ApiError } from "../common/api-error.js";
 import { AuditService } from "../common/audit.service.js";
@@ -13,6 +13,8 @@ export function csvField(value: string): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
+const { unsubscribeToken: _token, ...subscriberColumns } = getTableColumns(subscribers);
+
 /** The contact form inbox and newsletter subscribers. Staff only. */
 @Injectable()
 export class MessagesService {
@@ -24,7 +26,7 @@ export class MessagesService {
   private async counts() {
     const [[{ unread }], [{ subscribers: subs }]] = await Promise.all([
       this.db.select({ unread: count() }).from(messages).where(eq(messages.read, false)),
-      this.db.select({ subscribers: count() }).from(subscribers),
+      this.db.select({ subscribers: count() }).from(subscribers).where(isNull(subscribers.unsubscribedAt)),
     ]);
     return { unread, subscribers: subs };
   }
@@ -38,10 +40,10 @@ export class MessagesService {
     return { items, ...counts };
   }
 
-  /** The newest 500 subscribers, plus the counts for the tabs. */
+  /** The newest 500 subscribers (never their unsubscribe tokens), plus the counts for the tabs. */
   async listSubscribers() {
     const [items, counts] = await Promise.all([
-      this.db.select().from(subscribers).orderBy(desc(subscribers.createdAt)).limit(500),
+      this.db.select(subscriberColumns).from(subscribers).orderBy(desc(subscribers.createdAt)).limit(500),
       this.counts(),
     ]);
     return { items, ...counts };
@@ -66,12 +68,22 @@ export class MessagesService {
     return { message: `${label} removed.`, removed: rows.length };
   }
 
-  /** Every subscriber, oldest first: email, confirmed, subscribed_at. */
+  /**
+   * Every subscriber, oldest first: email, status, subscribed_at, unsubscribed_at. Unsubscribed
+   * people stay in the file (marked) so an import elsewhere can respect their choice.
+   */
   async subscribersCsv(): Promise<string> {
-    const rows = await this.db.select().from(subscribers).orderBy(asc(subscribers.createdAt));
+    const rows = await this.db.select(subscriberColumns).from(subscribers).orderBy(asc(subscribers.createdAt));
     const lines = [
-      ["email", "confirmed", "subscribed_at"].join(","),
-      ...rows.map((r) => [csvField(r.email), r.confirmed ? "yes" : "no", r.createdAt.toISOString()].join(",")),
+      ["email", "status", "subscribed_at", "unsubscribed_at"].join(","),
+      ...rows.map((r) =>
+        [
+          csvField(r.email),
+          r.unsubscribedAt ? "unsubscribed" : "subscribed",
+          r.createdAt.toISOString(),
+          r.unsubscribedAt?.toISOString() ?? "",
+        ].join(","),
+      ),
     ];
     return `${lines.join("\n")}\n`;
   }
