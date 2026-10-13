@@ -33,7 +33,7 @@ export const jobReview = pgEnum("job_review", ["pending", "approved", "rejected"
 export const contentStatus = pgEnum("content_status", ["draft", "published"]);
 export const categoryKind = pgEnum("category_kind", ["blog", "job"]);
 export const authorType = pgEnum("author_type", ["Person", "Organization"]);
-export const statKind = pgEnum("stat_kind", ["view", "apply_click"]);
+export const statKind = pgEnum("stat_kind", ["view", "apply_click", "visit"]);
 export const themePref = pgEnum("theme_pref", ["light", "dark", "system"]);
 /** draft → sending (deliveries going out) → sent. */
 export const newsletterStatus = pgEnum("newsletter_status", ["draft", "scheduled", "sending", "sent"]);
@@ -371,6 +371,19 @@ export const dailyStats = pgTable(
     count: integer("count").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.day, t.path, t.kind] }), index("daily_stats_entity_idx").on(t.entitySlug)],
+);
+
+/**
+ * Who is on the site right now. `id` is a random number each browser tab makes up and keeps in
+ * memory only (no cookie); the row goes when the tab leaves, or after a minute without a heartbeat.
+ */
+export const liveVisitors = pgTable(
+  "live_visitors",
+  {
+    id: uuid("id").primaryKey(),
+    lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("live_visitors_last_seen_idx").on(t.lastSeen)],
 );
 
 export interface DashboardLayout {

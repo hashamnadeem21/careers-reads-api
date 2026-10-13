@@ -264,6 +264,8 @@ describe("dashboard, activity, search, preferences", () => {
     expect(res.body.stats.posts.spark).toHaveLength(12);
     expect(res.body.stats.jobs.value).toBe(1);
     expect(res.body.traffic.points).toHaveLength(365);
+    expect(res.body.onlineNow).toBe(0);
+    expect((await http().get("/dashboard/live").set(editor).expect(200)).body).toEqual({ onlineNow: 0 });
     expect(res.body.lists.scheduled.map((i: { slug: string }) => i.slug)).toEqual(["future-post"]);
     expect(res.body.lists.expiring[0]).toMatchObject({
       slug: "closing-soon",

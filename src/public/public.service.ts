@@ -11,6 +11,7 @@ import {
   authors,
   categories,
   jobs,
+  liveVisitors,
   messages,
   settings,
   subscribers,
@@ -27,7 +28,7 @@ import {
   type SiteSettings,
 } from "../shared/settings-schema.js";
 import { rowToArticle, rowToAuthor, rowToJob } from "./mappers.js";
-import type { contactSchema, statsSchema } from "./public.schemas.js";
+import type { contactSchema, presenceSchema, statsSchema } from "./public.schemas.js";
 
 const FORM_WINDOW_SECONDS = 10 * 60;
 
@@ -162,6 +163,18 @@ export class PublicService {
     if (!userAgent || BOT_PATTERN.test(userAgent)) return false;
     await this.rateLimit.enforce(limitKey("stats", ip), 120, 60, "Too many requests.");
 
+    if ((input.kind === "visit") !== (input.path === "/")) {
+      throw new ApiError(HttpStatus.BAD_REQUEST, "bad_request", 'Site visits are counted on "/" only.');
+    }
+    if (input.kind === "visit") {
+      await this.db.execute(sql`
+        insert into daily_stats (day, path, kind, count)
+        values ((now() at time zone 'utc')::date, '/', 'visit', 1)
+        on conflict (day, path, kind) do update set count = daily_stats.count + 1
+      `);
+      return true;
+    }
+
     const [section, slug] = input.path.slice(1).split("/");
     if (input.kind === "apply_click" && section !== "jobs") {
       throw new ApiError(HttpStatus.BAD_REQUEST, "bad_request", "Apply clicks are only counted on jobs.");
@@ -176,5 +189,21 @@ export class PublicService {
       on conflict (day, path, kind) do update set count = daily_stats.count + 1
     `);
     return true;
+  }
+
+  /** Marks a tab as on the site (or gone, with `leave`). Stale tabs are swept on every heartbeat. */
+  async recordPresence(ip: string, userAgent: string, input: z.infer<typeof presenceSchema>): Promise<void> {
+    if (!userAgent || BOT_PATTERN.test(userAgent)) return;
+    await this.rateLimit.enforce(limitKey("presence", ip), 60, 60, "Too many requests.");
+
+    await this.db.delete(liveVisitors).where(sql`${liveVisitors.lastSeen} < now() - interval '1 minute'`);
+    if (input.leave) {
+      await this.db.delete(liveVisitors).where(eq(liveVisitors.id, input.id));
+      return;
+    }
+    await this.db
+      .insert(liveVisitors)
+      .values({ id: input.id })
+      .onConflictDoUpdate({ target: liveVisitors.id, set: { lastSeen: sql`now()` } });
   }
 }
