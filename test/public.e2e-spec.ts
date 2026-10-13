@@ -108,7 +108,7 @@ describe("public writes", () => {
     const bad = await http()
       .post("/public/contact")
       .set(asSiteServer())
-      .send({ ...contact, message: "short" })
+      .send({ ...contact, message: "   " })
       .expect(400);
     expect(bad.body.error.fields).toEqual({ message: expect.any(String) });
   });
