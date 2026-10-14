@@ -36,6 +36,9 @@ interface Claimed {
   subject: string;
   previewText: string;
   body: string;
+  heroImage: string;
+  ctaLabel: string;
+  ctaUrl: string;
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,6 +105,9 @@ export class AutomationSender implements BeforeApplicationShutdown {
         subject: emailAutomations.subject,
         previewText: emailAutomations.previewText,
         body: emailAutomations.body,
+        heroImage: emailAutomations.heroImage,
+        ctaLabel: emailAutomations.ctaLabel,
+        ctaUrl: emailAutomations.ctaUrl,
       })
       .from(automationDeliveries)
       .innerJoin(subscribers, eq(subscribers.id, automationDeliveries.subscriberId))

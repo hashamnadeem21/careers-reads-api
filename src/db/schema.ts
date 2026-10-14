@@ -250,6 +250,11 @@ export const newsletters = pgTable(
     /** The grey line inboxes show after the subject. */
     previewText: text("preview_text").notNull().default(""),
     body: text("body").notNull().default(""),
+    /** Optional banner image at the top of the email (site path or https URL). */
+    heroImage: text("hero_image").notNull().default(""),
+    /** Optional button after the body. */
+    ctaLabel: text("cta_label").notNull().default(""),
+    ctaUrl: text("cta_url").notNull().default(""),
     status: newsletterStatus("status").notNull().default("draft"),
     /** When a scheduled newsletter goes out (status "scheduled"). */
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
@@ -306,6 +311,9 @@ export const emailAutomations = pgTable("email_automations", {
   subject: text("subject").notNull(),
   previewText: text("preview_text").notNull().default(""),
   body: text("body").notNull().default(""),
+  heroImage: text("hero_image").notNull().default(""),
+  ctaLabel: text("cta_label").notNull().default(""),
+  ctaUrl: text("cta_url").notNull().default(""),
   active: boolean("active").notNull().default(false),
   /** Launch date: only triggers from here on count. Null = as soon as it's switched on. */
   startsAt: timestamp("starts_at", { withTimezone: true }),

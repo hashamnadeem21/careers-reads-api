@@ -55,6 +55,11 @@ const envSchema = z.object({
   NEWSLETTER_REPLY_TO: optional(z.email()),
   /** Postal address in every newsletter's footer (anti-spam laws ask for one). */
   NEWSLETTER_POSTAL_ADDRESS: optional(z.string().max(300)),
+  /**
+   * Where images in emails (logo, banners) load from. Inboxes fetch them from the internet, so a
+   * localhost site URL can't work: unset, it's PUBLIC_SITE_URL, or the live site when that is local.
+   */
+  EMAIL_ASSETS_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
   /** This API's public URL (e.g. https://api.careersreads.com): unsubscribe links point here. */
   API_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
   /** Runs the every-minute scheduler (scheduled newsletters, automation emails). Tests turn it off. */
