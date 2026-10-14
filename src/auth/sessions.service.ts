@@ -165,6 +165,7 @@ export class SessionsService {
         companyId: users.companyId,
         companyName: companies.name,
         companyAutoPublish: companies.autoPublish,
+        companyOnsiteApply: companies.onsiteApplyEnabled,
         companyActive: companies.active,
         theme: userPrefs.theme,
       })
@@ -181,6 +182,7 @@ export class SessionsService {
     return {
       ...user,
       companyAutoPublish: user.companyAutoPublish ?? false,
+      companyOnsiteApply: user.companyOnsiteApply ?? false,
       theme: user.theme ?? "system",
       sessionId,
     };

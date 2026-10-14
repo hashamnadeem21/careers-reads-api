@@ -83,6 +83,10 @@ test/                e2e tests + helpers (test DB, app factory)
 | `BLOB_READ_WRITE_TOKEN` | In production, this or `UPLOADS_PUBLIC_URL` | Vercel Blob token for media uploads. Without it, uploads go to `UPLOADS_DIR` |
 | `UPLOADS_DIR` | No | Local uploads folder, default `../blognest/public/uploads` so `/uploads/…` URLs work on the website |
 | `UPLOADS_PUBLIC_URL` | In production, this or `BLOB_READ_WRITE_TOKEN` | Self-hosted uploads: the public URL `UPLOADS_DIR` is served at (production: `https://api.careersreads.com/uploads`, served by Nginx). Uploads return absolute URLs under it |
+| `PRIVATE_BLOB_READ_WRITE_TOKEN` | In production, this or `PRIVATE_FILES_DIR` | CVs from on-site applications. A token for a **private** Vercel Blob store (not the public media store). CVs are only ever served by the API after an access check |
+| `PRIVATE_FILES_DIR` | In production, this or `PRIVATE_BLOB_READ_WRITE_TOKEN` | CVs on this server instead: a persistent directory that Nginx does **not** serve. Default in development: `.data/private-files` |
+| `APPLICATION_RETENTION_DAYS` | No | Applications and their CVs are deleted this many days after the job's deadline (or the application, if later). Default 180 |
+| `API_DOCS` | No | `true` serves the API reference at `/docs` in production. Off by default there (it maps every endpoint); always on in development |
 | `CORS_ORIGINS` | No | Leave empty: browsers never call the API directly |
 | `ACCESS_TOKEN_TTL_SECONDS` / `REFRESH_TOKEN_DAYS` | No | Default 900 seconds / 30 days |
 

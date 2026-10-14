@@ -8,6 +8,7 @@ import { ApiZodBody, ApiZodQuery, ZodPipe } from "../common/zod.js";
 import { type JobBody, jobBodySchema } from "./job-input.js";
 import {
   bulkJobsSchema,
+  deleteJobQuerySchema,
   jobListQuerySchema,
   type JobListQuery,
   jobStatusSchema,
@@ -65,10 +66,16 @@ export class JobsController {
     return this.jobs.save(user, slug, body);
   }
 
+  /** `?withApplications=true` confirms deleting a job that has applications (and their CVs). */
   @Delete(":slug")
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@CurrentUser() user: AuthUser, @Param("slug", slugParam) slug: string): Promise<void> {
-    await this.jobs.remove(user, slug);
+  @ApiZodQuery(deleteJobQuerySchema)
+  async remove(
+    @CurrentUser() user: AuthUser,
+    @Param("slug", slugParam) slug: string,
+    @Query(new ZodPipe(deleteJobQuerySchema)) query: z.infer<typeof deleteJobQuerySchema>,
+  ): Promise<void> {
+    await this.jobs.remove(user, slug, query.withApplications === "true");
   }
 
   @Post("bulk")

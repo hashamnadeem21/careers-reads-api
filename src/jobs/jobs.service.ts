@@ -8,10 +8,11 @@ import { RevalidateSiteService } from "../common/revalidate-site.service.js";
 import { copySlug, escapeLike } from "../common/slug.js";
 import type { Database } from "../db/client.js";
 import { InjectDb } from "../db/db.module.js";
-import { categories, companies, dailyStats, type JobRow, jobs } from "../db/schema.js";
+import { applications, categories, companies, dailyStats, type JobRow, jobs } from "../db/schema.js";
 import type { JobInput } from "../shared/jobs/schema.js";
 import { auditVerb, canAccessJob, jobScope, type Publishing, resolvePublishing } from "./job-access.js";
 import { type JobBody, parseJobBody } from "./job-input.js";
+import { copyQuestions, loadQuestions, syncQuestions } from "./job-questions.js";
 import type { bulkJobsSchema, JobListQuery, JobStatusFilter } from "./jobs.schemas.js";
 
 export const JOB_PAGE_SIZE = 20;
@@ -38,6 +39,10 @@ const SORTS = { posted: jobs.postedAt, deadline: jobs.deadline, title: jobs.titl
 /** Never reveals whether another company's job exists. */
 const notFound = (message = "This job no longer exists. It may have been deleted.") =>
   new ApiError(HttpStatus.NOT_FOUND, "not_found", message);
+
+/** How many applications a job has (the subquery behind the jobs list's count). */
+const applicationCount =
+  sql<number>`(select count(*) from ${applications} where ${applications.jobId} = ${jobs.id})`.mapWith(Number);
 
 const invalid = (fields: Record<string, string>) =>
   new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", fields);
@@ -66,6 +71,7 @@ function toRow(data: JobInput, publishing: Publishing) {
     responsibilities: data.responsibilities,
     requirements: data.requirements,
     benefits: data.benefits,
+    onsiteApply: data.onsiteApply,
     applyUrl: data.applyUrl ?? null,
     applyEmail: data.applyEmail ?? null,
     postedAt: new Date(data.postedAt),
@@ -122,7 +128,12 @@ export class JobsService {
 
     const [rows, [{ total }], counts] = await Promise.all([
       this.db
-        .select({ job: jobs, categoryName: categories.name, accountName: companies.name })
+        .select({
+          job: jobs,
+          categoryName: categories.name,
+          accountName: companies.name,
+          applications: applicationCount,
+        })
         .from(jobs)
         .leftJoin(categories, eq(categories.slug, jobs.category))
         .leftJoin(companies, eq(companies.id, jobs.companyId))
@@ -166,7 +177,30 @@ export class JobsService {
       .orderBy(asc(categories.sortOrder), asc(categories.name));
   }
 
-  /** One job with its all-time views and Apply clicks. */
+  private async countApplications(jobId: string): Promise<number> {
+    const [{ n }] = await this.db.select({ n: count() }).from(applications).where(eq(applications.jobId, jobId));
+    return n;
+  }
+
+  /**
+   * On-site applications are for jobs posted by Career Reads, and for companies a super admin has
+   * allowed. Checked when it's switched on; if the permission is withdrawn later, the job keeps the
+   * setting but the site stops offering it (see PublicService), so unrelated edits still save.
+   */
+  private async assertOnsiteAllowed(companyId: string | null): Promise<void> {
+    if (!companyId) return;
+    const [company] = await this.db
+      .select({ name: companies.name, enabled: companies.onsiteApplyEnabled })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+    if (!company?.enabled)
+      throw invalid({
+        onsiteApply: `Applications on Career Reads aren't turned on for ${company?.name ?? "this company"}. Ask Career Reads to enable them.`,
+      });
+  }
+
+  /** One job with its questions, application count, and all-time views and Apply clicks. */
   async get(user: AuthUser, slug: string) {
     const job = await this.load(user, slug);
     const result = await this.db.execute<{ views: number; applies: number }>(sql`
@@ -174,7 +208,19 @@ export class JobsService {
              coalesce(sum(count) filter (where kind = 'apply_click'), 0)::int as applies
       from ${dailyStats} where path = ${`/jobs/${slug}`}`);
     const stats = result.rows[0];
-    return { job, stats: { views: Number(stats?.views ?? 0), applies: Number(stats?.applies ?? 0) } };
+    const [questions, applicationTotal] = await Promise.all([
+      loadQuestions(this.db, job.id),
+      this.countApplications(job.id),
+    ]);
+    return {
+      job,
+      questions,
+      stats: {
+        views: Number(stats?.views ?? 0),
+        applies: Number(stats?.applies ?? 0),
+        applications: applicationTotal,
+      },
+    };
   }
 
   /**
@@ -187,7 +233,7 @@ export class JobsService {
     const parsed = parseJobBody(body);
     if (user.role === "company" && parsed.data) parsed.data.company = user.companyName ?? parsed.data.company;
     if (!parsed.data) throw invalid(parsed.errors);
-    const { data, slug } = parsed;
+    const { data, slug, questions } = parsed;
 
     const [category] = await this.db
       .select({ slug: categories.slug })
@@ -214,6 +260,12 @@ export class JobsService {
         if (!company) throw invalid({ companyId: "That company no longer exists" });
         data.company = company.name; // company-account jobs always show the account's name
       }
+    }
+
+    if (data.onsiteApply && !existing?.onsiteApply) await this.assertOnsiteAllowed(companyId);
+    // Applicants applied to this company; their details can't move to another one.
+    if (existing && existing.companyId !== companyId && (await this.countApplications(existing.id)) > 0) {
+      throw invalid({ companyId: "This job has applications, so it can't move to another company." });
     }
 
     if (slug !== originalSlug) {
@@ -244,13 +296,18 @@ export class JobsService {
             .set({ entitySlug: slug, path: `/jobs/${slug}` })
             .where(eq(dailyStats.path, `/jobs/${existing.slug}`));
         }
+        await syncQuestions(tx, updated.id, questions);
         return updated;
       });
     } else {
-      [saved] = await this.db
-        .insert(jobs)
-        .values({ ...row, slug, createdBy: user.id })
-        .returning();
+      saved = await this.db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(jobs)
+          .values({ ...row, slug, createdBy: user.id })
+          .returning();
+        await syncQuestions(tx, created.id, questions);
+        return created;
+      });
     }
 
     await this.audit.log(user, auditVerb(before, publishing), "job", slug, data.title);
@@ -274,6 +331,7 @@ export class JobsService {
     const newSlug = await copySlug(this.db, jobs, jobs.slug, job.slug);
     const {
       slug: _slug,
+      id: _id,
       createdAt: _createdAt,
       createdBy: _createdBy,
       updatedAt: _updatedAt,
@@ -281,18 +339,24 @@ export class JobsService {
       reviewNote: _reviewNote,
       ...rest
     } = job;
-    await this.db.insert(jobs).values({
-      ...rest,
-      slug: newSlug,
-      title: `${job.title} (copy)`.slice(0, 100),
-      status: "draft",
-      review: null,
-      reviewNote: null,
-      featured: false,
-      sample: false,
-      postedAt: new Date(),
-      deadline: null,
-      createdBy: user.id,
+    await this.db.transaction(async (tx) => {
+      const [copy] = await tx
+        .insert(jobs)
+        .values({
+          ...rest,
+          slug: newSlug,
+          title: `${job.title} (copy)`.slice(0, 100),
+          status: "draft",
+          review: null,
+          reviewNote: null,
+          featured: false,
+          sample: false,
+          postedAt: new Date(),
+          deadline: null,
+          createdBy: user.id,
+        })
+        .returning({ id: jobs.id });
+      await copyQuestions(tx, job.id, copy.id);
     });
     await this.audit.log(user, "duplicated", "job", newSlug, job.title);
     return { slug: newSlug, message: "Copied as a new draft." };
@@ -337,9 +401,24 @@ export class JobsService {
     return { message: site.ok ? `${verb}.` : `${verb}. The site will update within the hour.` };
   }
 
-  async remove(user: AuthUser, slug: string): Promise<void> {
+  /**
+   * Deletes the job. A job with applications is only deleted when `withApplications` confirms
+   * they go too (their CVs are then removed by the files sweep); otherwise it's a 409.
+   */
+  async remove(user: AuthUser, slug: string, withApplications = false): Promise<void> {
     const job = await this.load(user, slug);
+    const total = await this.countApplications(job.id);
+    if (total > 0 && !withApplications) {
+      throw new ApiError(
+        HttpStatus.CONFLICT,
+        "has_applications",
+        `This job has ${total} application${total === 1 ? "" : "s"}. Deleting it deletes them and their CVs too.`,
+        undefined,
+        { applications: total },
+      );
+    }
     await this.db.transaction(async (tx) => {
+      await tx.delete(applications).where(eq(applications.jobId, job.id));
       await tx.delete(jobs).where(eq(jobs.slug, job.slug));
       await tx.delete(dailyStats).where(eq(dailyStats.path, `/jobs/${job.slug}`));
     });
@@ -358,6 +437,22 @@ export class JobsService {
 
     let submitted = 0;
     if (action === "delete") {
+      const [{ n }] = await this.db
+        .select({ n: count() })
+        .from(applications)
+        .where(
+          inArray(
+            applications.jobId,
+            rows.map((r) => r.id),
+          ),
+        );
+      if (n > 0) {
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          "has_applications",
+          "Some of these jobs have applications. Delete those jobs one at a time to confirm.",
+        );
+      }
       await this.db.transaction(async (tx) => {
         await tx.delete(jobs).where(inArray(jobs.slug, found));
         await tx.delete(dailyStats).where(

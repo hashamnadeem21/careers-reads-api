@@ -57,6 +57,13 @@
       "when": 1791978291021,
       "tag": "0007_email_hero_and_button",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791984040147,
+      "tag": "0008_onsite_applications",
+      "breakpoints": true
     }
   ]
 }

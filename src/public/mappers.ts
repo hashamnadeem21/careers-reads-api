@@ -80,6 +80,7 @@ export function rowToJob(row: JobRow): Job | null {
     responsibilities: row.responsibilities,
     requirements: row.requirements,
     benefits: row.benefits,
+    onsiteApply: row.onsiteApply,
     applyUrl: row.applyUrl ?? undefined,
     applyEmail: row.applyEmail ?? undefined,
     postedAt: row.postedAt,

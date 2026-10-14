@@ -1,6 +1,7 @@
 import request from "supertest";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import type { DbConnection } from "../src/db/client.js";
+import { resetEnvCache } from "../src/config/env.js";
 import { createTestApp } from "./helpers/app.js";
 import { connectTestDb } from "./helpers/test-db.js";
 
@@ -27,6 +28,20 @@ describe("app", () => {
     const res = await request(app.getHttpServer()).get("/docs-json").expect(200);
     expect(res.body.info.title).toBe("Career Reads API");
     expect(Object.keys(res.body.paths)).toContain("/health");
+  });
+
+  it("can switch the API reference off (production default)", async () => {
+    process.env.API_DOCS = "false";
+    resetEnvCache();
+    const hidden = await createTestApp();
+    try {
+      await request(hidden.getHttpServer()).get("/docs-json").expect(404);
+      await request(hidden.getHttpServer()).get("/docs").expect(404);
+    } finally {
+      await hidden.close();
+      delete process.env.API_DOCS;
+      resetEnvCache();
+    }
   });
 
   it("returns the standard error shape for unknown routes", async () => {

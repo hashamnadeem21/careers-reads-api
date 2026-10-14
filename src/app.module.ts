@@ -1,4 +1,5 @@
 import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
+import { ApplicationsModule } from "./applications/applications.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { AutomationsModule } from "./automations/automations.module.js";
 import { CommonModule } from "./common/common.module.js";
@@ -30,6 +31,7 @@ import { UsersModule } from "./users/users.module.js";
     CompaniesModule,
     PostsModule,
     JobsModule,
+    ApplicationsModule,
     MediaModule,
     CategoriesModule,
     AuthorsModule,

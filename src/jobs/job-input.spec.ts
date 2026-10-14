@@ -36,7 +36,30 @@ describe("parseJobBody", () => {
   });
 
   it("requires a way to apply", () => {
-    expect(parse({ applyEmail: "" }).errors.applyUrl).toMatch(/applyUrl or an applyEmail/);
+    expect(parse({ applyEmail: "" }).errors.applyUrl).toMatch(/apply link or email, or take applications on Career Reads/);
+  });
+
+  it("lets a job take applications on Career Reads only", () => {
+    const parsed = parse({ applyEmail: "", onsiteApply: true });
+    expect(parsed.errors).toEqual({});
+    expect(parsed.data).toMatchObject({ onsiteApply: true, applyEmail: undefined });
+  });
+
+  it("checks screening questions and reports errors by position", () => {
+    const parsed = parse({
+      questions: [
+        { kind: "yes_no", label: "Can you work weekends?", required: true },
+        { kind: "single_choice", label: "Shift?", options: ["Day"] },
+        { kind: "essay", label: "Hmm" },
+      ],
+    });
+    expect(parsed.errors).toMatchObject({
+      "questions.1.options": "Add at least two choices",
+      "questions.2.kind": expect.any(String),
+    });
+    expect(parsed.questions).toEqual([
+      { kind: "yes_no", label: "Can you work weekends?", options: [], required: true },
+    ]);
   });
 
   it("rejects a deadline before the posted date and bad slugs", () => {

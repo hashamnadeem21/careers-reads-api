@@ -1,0 +1,161 @@
+import { HttpStatus, Injectable, Logger } from "@nestjs/common";
+import { and, eq, sql } from "drizzle-orm";
+import { ApiError } from "../common/api-error.js";
+import { fieldErrors } from "../common/zod.js";
+import { limitKey, RateLimitService } from "../common/rate-limit.service.js";
+import type { Database } from "../db/client.js";
+import { InjectDb } from "../db/db.module.js";
+import { applicationAnswers, applications, candidates, companies, type JobRow, jobs } from "../db/schema.js";
+import { checkCv } from "../files/cv-file.js";
+import { PrivateFilesService } from "../files/private-files.service.js";
+import { loadQuestions } from "../jobs/job-questions.js";
+import { checkAnswers, type FormQuestion } from "../shared/jobs/questions.js";
+import { isJobVisible } from "../shared/jobs/visibility.js";
+import { applySchema } from "./applications.schemas.js";
+
+/** 5 applications per visitor per hour: plenty for a person, little for a bot. */
+const APPLY_LIMIT = 5;
+const APPLY_WINDOW_SECONDS = 60 * 60;
+/** And 20 per email address per day, however many connections they come from. */
+const EMAIL_LIMIT = 20;
+const EMAIL_WINDOW_SECONDS = 24 * 60 * 60;
+
+export interface ApplicationForm {
+  job: { slug: string; title: string; company: string };
+  questions: FormQuestion[];
+}
+
+export interface UploadedCv {
+  originalname: string;
+  buffer: Buffer;
+}
+
+const closed = () =>
+  new ApiError(HttpStatus.NOT_FOUND, "not_accepting", "This job isn't taking applications on Career Reads.");
+
+/** Applying on the website: the form a job shows, and taking an application in. */
+@Injectable()
+export class ApplyService {
+  private readonly logger = new Logger("Apply");
+
+  constructor(
+    @InjectDb() private readonly db: Database,
+    private readonly rateLimit: RateLimitService,
+    private readonly files: PrivateFilesService,
+  ) {}
+
+  /** The job, if it's on the site and taking applications on Career Reads right now. */
+  private async openJob(slug: string): Promise<JobRow> {
+    const [row] = await this.db
+      .select({ job: jobs, allowed: sql<boolean>`coalesce(${companies.onsiteApplyEnabled}, true)` })
+      .from(jobs)
+      .leftJoin(companies, eq(companies.id, jobs.companyId))
+      .where(eq(jobs.slug, slug))
+      .limit(1);
+    if (!row || !row.job.onsiteApply || !row.allowed) throw closed();
+    const { status, postedAt, deadline, sample } = row.job;
+    if (!isJobVisible({ status, sample, postedAt: postedAt.toISOString(), deadline: deadline?.toISOString() }))
+      throw closed();
+    return row.job;
+  }
+
+  async form(slug: string): Promise<ApplicationForm> {
+    const job = await this.openJob(slug);
+    return {
+      job: { slug: job.slug, title: job.title, company: job.company },
+      questions: await loadQuestions(this.db, job.id),
+    };
+  }
+
+  /**
+   * Checks everything first (fields, answers, CV), stores the CV, then saves the candidate,
+   * application and answers in one transaction. A CV whose application never got saved is deleted
+   * by the files sweep. The emails go out from the scheduler.
+   *
+   * Applying twice to the same job looks like success but saves nothing: an error would let anyone
+   * find out whether a given email address applied for a given job.
+   */
+  async apply(ip: string, slug: string, body: unknown, cv: UploadedCv | undefined): Promise<void> {
+    await this.rateLimit.enforce(
+      limitKey("apply", ip),
+      APPLY_LIMIT,
+      APPLY_WINDOW_SECONDS,
+      "Too many applications from your connection. Please try again in an hour.",
+    );
+    const job = await this.openJob(slug);
+
+    const parsed = applySchema.safeParse(body);
+    const errors: Record<string, string> = parsed.success ? {} : fieldErrors(parsed.error);
+    if (parsed.success && parsed.data.website) {
+      this.logger.warn(`Ignored a bot application for ${slug}`);
+      return; // looks like success to the bot
+    }
+    const questions = await loadQuestions(this.db, job.id);
+    const answers = checkAnswers(questions, parsed.success ? parsed.data.answers : {});
+    if (parsed.success) Object.assign(errors, answers.errors);
+    const cvCheck = cv ? checkCv(cv.buffer) : ({ ok: false, error: "Attach your CV" } as const);
+    if (!cvCheck.ok) errors.cv = cvCheck.error;
+    if (!parsed.success || Object.keys(errors).length || !cv || !cvCheck.ok) {
+      throw new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", errors);
+    }
+    const fields = parsed.data;
+    await this.rateLimit.enforce(
+      limitKey("apply-email", fields.email),
+      EMAIL_LIMIT,
+      EMAIL_WINDOW_SECONDS,
+      "Too many applications from this email address today. Please try again tomorrow.",
+    );
+
+
+    const file = await this.files.saveCv(cv.buffer, cv.originalname, cvCheck.type, cvCheck.contentType);
+    // Checked after storing the CV so a repeat takes as long as a real application (its unused
+    // copy goes in the files sweep): response times don't reveal who applied either.
+    const [repeat] = await this.db
+      .select({ id: applications.id })
+      .from(applications)
+      .innerJoin(candidates, eq(candidates.id, applications.candidateId))
+      .where(and(eq(applications.jobId, job.id), eq(candidates.email, fields.email)))
+      .limit(1);
+    if (repeat) return;
+    const now = new Date();
+    const saved = await this.db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .insert(candidates)
+        .values({ email: fields.email, name: fields.name, phone: fields.phone })
+        .onConflictDoUpdate({
+          target: candidates.email,
+          set: { name: fields.name, phone: fields.phone, updatedAt: now },
+        })
+        .returning({ id: candidates.id });
+      const [application] = await tx
+        .insert(applications)
+        .values({
+          jobId: job.id,
+          companyId: job.companyId,
+          candidateId: candidate.id,
+          resumeFileId: file.id,
+          name: fields.name,
+          email: fields.email,
+          phone: fields.phone,
+          location: fields.location ?? null,
+          linkedinUrl: fields.linkedinUrl ?? null,
+          coverLetter: fields.coverLetter ?? null,
+          consentAt: now,
+        })
+        .onConflictDoNothing({ target: [applications.jobId, applications.candidateId] })
+        .returning({ id: applications.id });
+      if (!application) return false; // a second submit that raced the first
+      const rows = questions.map((q, position) => ({
+        applicationId: application.id,
+        position,
+        questionId: q.id,
+        kind: q.kind,
+        label: q.label,
+        value: answers.values.get(q.id) ?? null,
+      }));
+      if (rows.length) await tx.insert(applicationAnswers).values(rows);
+      return true;
+    });
+    if (!saved) return; // a second submit that raced the first: same answer as a repeat
+  }
+}

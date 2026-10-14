@@ -7,6 +7,8 @@ export interface OutgoingEmail {
   html: string;
   text: string;
   headers?: Record<string, string>;
+  /** Where replies go instead of NEWSLETTER_REPLY_TO (e.g. the candidate, on an application alert). */
+  replyTo?: string;
 }
 
 export type BatchResult = { ok: true } | { ok: false; error: string };
@@ -69,7 +71,7 @@ export class MailerService {
             subject: email.subject,
             html: email.html,
             text: email.text,
-            ...(NEWSLETTER_REPLY_TO && { reply_to: NEWSLETTER_REPLY_TO }),
+            ...((email.replyTo ?? NEWSLETTER_REPLY_TO) && { reply_to: email.replyTo ?? NEWSLETTER_REPLY_TO }),
             ...(email.headers && { headers: email.headers }),
           })),
         ),

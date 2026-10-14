@@ -28,9 +28,13 @@ export interface RenderOptions {
   siteUrl: string;
   /** Where images load from, when not `siteUrl` (inboxes can't reach a localhost site). */
   assetsUrl?: string;
-  /** This subscriber's unsubscribe page. */
-  unsubscribeUrl: string;
+  /** This subscriber's unsubscribe page. Left out for one-off emails (an application receipt). */
+  unsubscribeUrl?: string;
   postalAddress?: string;
+  /** The footer's "why you got this" line (default: the newsletter subscription). */
+  reason?: string;
+  /** The "New jobs every day" band above the footer (default: shown). */
+  promo?: boolean;
 }
 
 export const SITE_NAME = "Career Reads";
@@ -63,7 +67,10 @@ const TAG_STYLES: Record<string, string> = {
 };
 
 export function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
 }
 
 function absolute(url: string, base: string): string {
@@ -129,7 +136,8 @@ function button(label: string, href: string): string {
  * "why Career Reads" band, and the footer with the unsubscribe link.
  */
 export function renderNewsletter(content: NewsletterContent, options: RenderOptions): { html: string; text: string } {
-  const { siteUrl, unsubscribeUrl, postalAddress, assetsUrl = siteUrl } = options;
+  const { siteUrl, unsubscribeUrl, postalAddress, assetsUrl = siteUrl, promo = true } = options;
+  const reason = options.reason ?? `You're receiving this because you subscribed to the ${SITE_NAME} newsletter.`;
   const site = escapeHtml(siteUrl);
   const link = (path: string) => escapeHtml(absolute(path, siteUrl));
   const ctaUrl = content.ctaUrl?.trim() ? absolute(content.ctaUrl.trim(), siteUrl) : "";
@@ -143,7 +151,10 @@ export function renderNewsletter(content: NewsletterContent, options: RenderOpti
     ["Career guides", "/blog"],
     ["Trending", "/trending"],
   ]
-    .map(([label, path]) => `<a href="${link(path)}" target="_blank" style="color:${MUTED};text-decoration:none">${label}</a>`)
+    .map(
+      ([label, path]) =>
+        `<a href="${link(path)}" target="_blank" style="color:${MUTED};text-decoration:none">${label}</a>`,
+    )
     .join(`<span style="color:#cbd5e1">&nbsp;&nbsp;·&nbsp;&nbsp;</span>`);
 
   const html = `<!doctype html>
@@ -170,7 +181,9 @@ ${heroImg ? `<tr><td style="padding:0">${ctaUrl ? `<a href="${escapeHtml(ctaUrl)
 ${markdownToEmailHtml(content.body, siteUrl, assetsUrl)}
 ${ctaUrl ? button(ctaLabel, ctaUrl) : ""}
 </td></tr>
-<tr><td style="padding:16px 32px 32px">
+${
+  promo
+    ? `<tr><td style="padding:16px 32px 32px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border-radius:12px">
 <tr><td style="padding:18px 20px;font-family:${FONT};font-size:14px;line-height:1.55;color:${INK}">
 <strong>New jobs every day, plus practical career guides.</strong><br>
@@ -178,12 +191,14 @@ ${ctaUrl ? button(ctaLabel, ctaUrl) : ""}
 <a href="${link("/jobs")}" target="_blank" style="display:inline-block;margin-top:8px;color:${LINK};font-weight:700;text-decoration:none">Browse the latest jobs &rarr;</a>
 </td></tr>
 </table>
-</td></tr>
+</td></tr>`
+    : `<tr><td style="height:20px;line-height:20px;font-size:0">&nbsp;</td></tr>`
+}
 </table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
 <tr><td style="padding:22px 16px 8px;font-family:${FONT};font-size:12px;line-height:1.7;color:${MUTED};text-align:center">
-You're receiving this because you subscribed to the ${SITE_NAME} newsletter.<br>
-${postalAddress ? `${escapeHtml(postalAddress)}<br>` : ""}<a href="${escapeHtml(unsubscribeUrl)}" style="color:${MUTED};text-decoration:underline">Unsubscribe</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="${site}" target="_blank" style="color:${MUTED};text-decoration:underline">Visit ${SITE_NAME}</a><br>
+${escapeHtml(reason)}<br>
+${postalAddress ? `${escapeHtml(postalAddress)}<br>` : ""}${unsubscribeUrl ? `<a href="${escapeHtml(unsubscribeUrl)}" style="color:${MUTED};text-decoration:underline">Unsubscribe</a>&nbsp;&nbsp;·&nbsp;&nbsp;` : ""}<a href="${site}" target="_blank" style="color:${MUTED};text-decoration:underline">Visit ${SITE_NAME}</a><br>
 &copy; ${new Date().getFullYear()} ${SITE_NAME}
 </td></tr>
 </table>
@@ -197,9 +212,9 @@ ${postalAddress ? `${escapeHtml(postalAddress)}<br>` : ""}<a href="${escapeHtml(
     ...(ctaUrl ? ["", `${ctaLabel}: ${ctaUrl}`] : []),
     "",
     "—",
-    `You're receiving this because you subscribed to the ${SITE_NAME} newsletter.`,
+    reason,
     ...(postalAddress ? [postalAddress] : []),
-    `Unsubscribe: ${unsubscribeUrl}`,
+    ...(unsubscribeUrl ? [`Unsubscribe: ${unsubscribeUrl}`] : []),
   ].join("\n");
 
   return { html, text };

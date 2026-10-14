@@ -11,6 +11,8 @@ export const companySchema = z.object({
     .transform((v) => v || undefined)
     .pipe(z.url("Enter a full address, like https://company.com").optional()),
   autoPublish: z.boolean().default(false),
+  /** Take applications on Career Reads. Left out = unchanged (off for a new company). */
+  onsiteApplyEnabled: z.boolean().optional(),
 });
 
 export const setActiveSchema = z.object({ active: z.boolean() });

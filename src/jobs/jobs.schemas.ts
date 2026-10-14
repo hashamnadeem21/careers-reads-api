@@ -29,3 +29,5 @@ export const bulkJobsSchema = z.object({
   action: z.enum(["publish", "unpublish", "delete"]),
   slugs: z.array(z.string().regex(SLUG_PATTERN).max(100)).min(1).max(100),
 });
+
+export const deleteJobQuerySchema = z.object({ withApplications: z.enum(["true", "false"]).optional() });
