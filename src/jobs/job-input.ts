@@ -2,7 +2,8 @@ import { z } from "zod";
 import { fieldErrors } from "../common/zod.js";
 import { slugify } from "../common/slug.js";
 import { SLUG_PATTERN } from "../shared/content/schema.js";
-import { type JobInput, jobSchema } from "../shared/jobs/schema.js";
+import { type JobInput, descriptionText, jobSchema, summaryFromDescription } from "../shared/jobs/schema.js";
+import { sanitizeJobHtml } from "./job-html.js";
 
 /**
  * What the admin's job form sends, as JSON (port of the admin's `lib/jobs/form.ts`).
@@ -26,6 +27,8 @@ export const jobBodySchema = z.object({
   experience: text,
   salary: text,
   summary: text,
+  /** Rich-text job description (HTML from the editor). When set, the summary is derived from it. */
+  description: z.string().max(100_000).default(""),
   responsibilities: list,
   requirements: list,
   benefits: list,
@@ -67,6 +70,8 @@ export function parseJobBody(body: JobBody): ParsedJob {
   const company = body.company.trim();
   const slug = body.slug.trim().toLowerCase() || jobSlugFrom(title, company);
   const items = (values: string[]) => values.map((v) => v.trim()).filter(Boolean);
+  const html = sanitizeJobHtml(body.description);
+  const description = descriptionText(html) ? html : undefined;
 
   const candidate = {
     title,
@@ -79,7 +84,8 @@ export function parseJobBody(body: JobBody): ParsedJob {
     category: body.category.trim(),
     experience: body.experience.trim(),
     salary: optional(body.salary),
-    summary: body.summary.trim(),
+    summary: description ? summaryFromDescription(description) : body.summary.trim(),
+    description,
     responsibilities: items(body.responsibilities),
     requirements: items(body.requirements),
     benefits: items(body.benefits),
@@ -101,6 +107,11 @@ export function parseJobBody(body: JobBody): ParsedJob {
   const parsed = jobSchema.safeParse(candidate);
   if (!parsed.success)
     for (const [field, message] of Object.entries(fieldErrors(parsed.error))) errors[field] ??= message;
+  // With a description the summary is derived from it, so its errors belong to the editor.
+  if (description && errors.summary) {
+    errors.description ??= "Write at least 30 characters";
+    delete errors.summary;
+  }
   if (!parsed.success || Object.keys(errors).length) return { slug, errors };
   return { slug, data: parsed.data, errors };
 }

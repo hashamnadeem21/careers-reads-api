@@ -43,6 +43,13 @@
       "when": 1791895816347,
       "tag": "0005_live_visitors",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791976525287,
+      "tag": "0006_job_description",
+      "breakpoints": true
     }
   ]
 }

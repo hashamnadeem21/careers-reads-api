@@ -35,6 +35,8 @@ export const jobSchema = z
     /** Free text, e.g. "PKR 80,000 – 120,000 / month". Leave out if not disclosed. */
     salary: z.string().trim().min(2).max(80).optional(),
     summary: z.string().trim().min(30),
+    /** Rich-text job ad (sanitized HTML). Replaces summary + lists on the site; older jobs don't have one. */
+    description: z.string().trim().max(60_000).optional(),
     responsibilities: listItems.default([]),
     requirements: listItems.default([]),
     benefits: listItems.default([]),
@@ -58,6 +60,27 @@ export type JobInput = z.infer<typeof jobSchema>;
 
 export interface Job extends JobInput {
   slug: string;
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };
+
+/** Plain text of a job description's HTML, for search, meta descriptions and the summary. */
+export function descriptionText(html: string): string {
+  return html
+    .replace(/<\/(p|li|h[1-6]|blockquote|div)>|<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#?\w+);/g, (m, name: string) => ENTITIES[name] ?? m)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The short summary saved alongside a description: its opening text, cut at a word, at most 240 characters. */
+export function summaryFromDescription(html: string): string {
+  const text = descriptionText(html);
+  if (text.length <= 240) return text;
+  const cut = text.slice(0, 239);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 180 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 export function jobLocation(job: Pick<Job, "city" | "country" | "workModel">): string {
