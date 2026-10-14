@@ -12,10 +12,12 @@ const optionalText = (max: number, message: string) =>
 /** The application form's fields (multipart, so everything arrives as text). The CV is the `cv` file. */
 export const applySchema = z.object({
   name: z.string().trim().min(2, "Enter your full name").max(100, "Keep your name under 100 characters"),
+  /** Ignored: applications use the signed-in candidate's account email. Kept so older forms still validate. */
   email: z
     .email("Enter a valid email address")
     .max(200)
-    .transform((v) => v.toLowerCase()),
+    .transform((v) => v.toLowerCase())
+    .optional(),
   phone: z
     .string()
     .trim()

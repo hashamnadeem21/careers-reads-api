@@ -3,6 +3,7 @@ import { CronExpression, SchedulerRegistry } from "@nestjs/schedule";
 import { CronJob } from "cron";
 import { ApplicationNotifier, type NotifySummary } from "../applications/application-notifier.service.js";
 import { AutomationSender, type SendSummary } from "../automations/automation-sender.service.js";
+import { CandidateSessionsService } from "../candidates/candidate-sessions.service.js";
 import { env } from "../config/env.js";
 import { PrivateFilesService } from "../files/private-files.service.js";
 import { NewslettersService } from "../newsletters/newsletters.service.js";
@@ -35,6 +36,7 @@ export class SchedulerService implements OnApplicationBootstrap, BeforeApplicati
     private readonly automations: AutomationSender,
     private readonly applications: ApplicationNotifier,
     private readonly files: PrivateFilesService,
+    private readonly candidateSessions: CandidateSessionsService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -91,10 +93,11 @@ export class SchedulerService implements OnApplicationBootstrap, BeforeApplicati
     return summary;
   }
 
-  /** Deletes applications past the retention period, then CVs nothing uses any more. */
+  /** Deletes applications past the retention period, CVs nothing uses any more, and expired candidate sessions and links. */
   async housekeeping(now = new Date()): Promise<{ applications: number; files: number }> {
     const applications = await this.applications.purgeExpired(now);
     const files = await this.files.sweep(now);
+    await this.candidateSessions.sweep(now);
     if (files) this.logger.log(`Deleted ${files} unused private file${files === 1 ? "" : "s"}.`);
     return { applications, files };
   }

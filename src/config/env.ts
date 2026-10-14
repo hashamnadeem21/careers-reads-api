@@ -82,6 +82,13 @@ const envSchema = z.object({
    * their types from a local API.
    */
   API_DOCS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).optional()),
+  /**
+   * Google sign-in for candidates on the website: the OAuth "Web application" client ID
+   * (…apps.googleusercontent.com). Public by design. Unset = "Continue with Google" is off.
+   */
+  GOOGLE_CLIENT_ID: optional(z.string().regex(/\.apps\.googleusercontent\.com$/, "GOOGLE_CLIENT_ID should end with .apps.googleusercontent.com")),
+  /** How long a candidate stays signed in on the website. */
+  CANDIDATE_SESSION_DAYS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(365).default(60)),
   /** Comma-separated browser origins allowed by CORS. Empty = CORS off (server-to-server only). */
   CORS_ORIGINS: z.preprocess(
     emptyToUndefined,

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { CandidatesModule } from "../candidates/candidates.module.js";
 import { FilesModule } from "../files/files.module.js";
 import { MailModule } from "../mail/mail.module.js";
 import { ApplicationNotifier } from "./application-notifier.service.js";
@@ -8,7 +9,7 @@ import { ApplicationsService } from "./applications.service.js";
 import { ApplyService } from "./apply.service.js";
 
 @Module({
-  imports: [FilesModule, MailModule],
+  imports: [FilesModule, MailModule, CandidatesModule],
   controllers: [ApplicationsPublicController, ApplicationsController],
   providers: [ApplyService, ApplicationsService, ApplicationNotifier],
   exports: [ApplicationNotifier, FilesModule],

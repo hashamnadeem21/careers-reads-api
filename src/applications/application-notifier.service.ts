@@ -67,6 +67,7 @@ export class ApplicationNotifier {
       .where(
         and(
           isNull(applications.notifiedAt),
+          eq(applications.awaitingConfirmation, false),
           lt(applications.notifyAttempts, MAX_ATTEMPTS),
           gt(applications.createdAt, new Date(now.getTime() - NOTIFY_WINDOW_HOURS * 3_600_000)),
         ),

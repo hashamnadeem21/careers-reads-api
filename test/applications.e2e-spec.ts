@@ -11,7 +11,7 @@ import { MailerService } from "../src/mail/mailer.service.js";
 import { SchedulerService } from "../src/scheduler/scheduler.service.js";
 import { createTestApp } from "./helpers/app.js";
 import { FakeMailer } from "./helpers/fake-mailer.js";
-import { asSiteServer, bearer, createCategory, createCompany, createUser, login } from "./helpers/seed.js";
+import { asSiteServer, bearer, createCandidateSession, createCategory, createCompany, createUser, login } from "./helpers/seed.js";
 import { connectTestDb, resetTestDb } from "./helpers/test-db.js";
 
 let connection: DbConnection;
@@ -49,19 +49,29 @@ const job = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** An application as the website's server sends it. */
-const apply = (slug: string, fields: Record<string, string> = {}, cv: Buffer | null = PDF, site = asSiteServer()) => {
-  const req = http().post(`/public/jobs/${slug}/applications`).set(site);
-  const all = {
-    name: "Sara Khan",
-    email: "Sara@Example.com",
-    phone: "+92 300 1234567",
-    consent: "true",
-    ...fields,
+/** Signed-in candidates by email (accounts are created on first use). */
+const sessions = new Map<string, Record<string, string>>();
+async function signedIn(email: string): Promise<Record<string, string>> {
+  const key = email.toLowerCase();
+  if (!sessions.has(key)) sessions.set(key, (await createCandidateSession(app, connection.db, key)).headers);
+  return { ...sessions.get(key)!, ...asSiteServer() };
+}
+
+/**
+ * An application as the website's server sends it, signed in as the candidate whose email is in
+ * `fields.email` (default sara@example.com). The account's email is what's stored.
+ */
+const apply = (slug: string, fields: Record<string, string> = {}, cv: Buffer | null = PDF) => {
+  const { email = "Sara@Example.com", ...rest } = fields;
+  const validEmail = /@/.test(email) ? email : "sara@example.com";
+  const send = async () => {
+    const req = http().post(`/public/jobs/${slug}/applications`).set(await signedIn(validEmail));
+    const all = { name: "Sara Khan", phone: "+92 300 1234567", consent: "true", ...rest, ...(validEmail === email ? {} : { email }) };
+    for (const [key, value] of Object.entries(all)) void req.field(key, value);
+    if (cv) void req.attach("cv", cv, "Sara Khan CV.pdf");
+    return { req }; // wrapped: awaiting a supertest request would send it
   };
-  for (const [key, value] of Object.entries(all)) void req.field(key, value);
-  if (cv) void req.attach("cv", cv, "Sara Khan CV.pdf");
-  return req;
+  return { expect: async (status: number) => (await send()).req.expect(status) };
 };
 
 beforeAll(async () => {
@@ -167,12 +177,16 @@ describe("on-site applications", () => {
     expect(fake.body.error.fields.cv).toBe("Upload your CV as a PDF or Word document.");
   });
 
-  it("takes an application once per person, without revealing who applied", async () => {
+  it("needs a signed-in candidate", async () => {
+    await http().post(`/public/jobs/${slug}/applications`).set(asSiteServer()).field("name", "Sara").expect(401);
+  });
+
+  it("takes an application once per person, and says so when they apply again", async () => {
     const answers = JSON.stringify({ [questionIds[0]]: "yes", [questionIds[1]]: "1 month" });
     const res = await apply(slug, { answers, linkedinUrl: "https://linkedin.com/in/sara" }).expect(201);
-    expect(res.body.message).toMatch(/Application sent/);
-    // A repeat looks the same from outside (no way to probe who applied), but nothing changes.
-    await apply(slug, { answers, email: "sara@example.com", name: "Someone Else" }).expect(201);
+    expect(res.body).toMatchObject({ status: "submitted", message: expect.stringMatching(/Application sent/) });
+    const again = await apply(slug, { answers, email: "sara@example.com", name: "Someone Else" }).expect(201);
+    expect(again.body.status).toBe("already_applied");
     expect(await connection.db.select().from(applications)).toHaveLength(1);
 
     const [row] = await connection.db.select().from(applications);
@@ -294,8 +308,8 @@ describe("on-site applications", () => {
 
     const scheduler = app.get(SchedulerService);
     expect(await scheduler.housekeeping(new Date())).toEqual({ applications: 0, files: 0 }); // still within the grace hour
-    // Sara's CV, plus the copy stored for her repeat application (kept only until the sweep).
-    expect(await scheduler.housekeeping(new Date(Date.now() + 2 * HOUR))).toEqual({ applications: 0, files: 2 });
+    // Sara's CV (her repeat application was turned away before its CV was stored).
+    expect(await scheduler.housekeeping(new Date(Date.now() + 2 * HOUR))).toEqual({ applications: 0, files: 1 });
     expect(await connection.db.select().from(privateFiles)).toHaveLength(0);
     expect((await readdir(filesDir, { recursive: true })).filter((f) => f.endsWith(".pdf"))).toEqual([]);
   });

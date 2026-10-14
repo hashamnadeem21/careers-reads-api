@@ -64,6 +64,20 @@
       "when": 1791984040147,
       "tag": "0008_onsite_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791994212273,
+      "tag": "0009_candidate_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792011007903,
+      "tag": "0010_held_applications",
+      "breakpoints": true
     }
   ]
 }

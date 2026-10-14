@@ -11,9 +11,12 @@ import {
   automationDeliveries,
   type AutomationDeliveryStatus,
   type AutomationRow,
+  candidates,
   emailAutomations,
   subscribers,
 } from "../db/schema.js";
+import { candidateWelcomeEmail } from "../candidates/candidate-emails.js";
+import { env } from "../config/env.js";
 import { MailerService } from "../mail/mailer.service.js";
 import { composeEmail } from "../newsletters/compose.js";
 import type { AutomationBody } from "./automations.schemas.js";
@@ -69,14 +72,15 @@ export class AutomationsService {
       this.db
         .select({
           id: automationDeliveries.id,
-          email: subscribers.email,
+          email: sql<string>`coalesce(${subscribers.email}, ${candidates.email})`,
           status: automationDeliveries.status,
           dueAt: automationDeliveries.dueAt,
           sentAt: automationDeliveries.sentAt,
           error: automationDeliveries.error,
         })
         .from(automationDeliveries)
-        .innerJoin(subscribers, eq(subscribers.id, automationDeliveries.subscriberId))
+        .leftJoin(subscribers, eq(subscribers.id, automationDeliveries.subscriberId))
+        .leftJoin(candidates, eq(candidates.id, automationDeliveries.candidateId))
         .where(eq(automationDeliveries.automationId, id))
         .orderBy(desc(automationDeliveries.createdAt), desc(automationDeliveries.id))
         .limit(25),
@@ -161,7 +165,12 @@ export class AutomationsService {
       600,
       "Too many test emails. Try again in a few minutes.",
     );
-    const copy = composeEmail({ ...automation, subject: `[Test] ${automation.subject}` }, email, "test");
+    const content = { ...automation, subject: `[Test] ${automation.subject}` };
+    // The candidate welcome, as a password sign-up sees it: their first name and the confirm button.
+    const copy =
+      automation.trigger === "candidate_signed_up"
+        ? candidateWelcomeEmail(content, { email, name: user.name }, `${env().PUBLIC_SITE_URL}/account/confirm-email?token=test-link`)
+        : composeEmail(content, email, "test");
     const result = await this.mailer.sendBatch([copy]);
     if (!result.ok) throw new ApiError(HttpStatus.BAD_GATEWAY, "send_failed", result.error);
     return { message: `Test sent to ${email}.` };

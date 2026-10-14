@@ -5,7 +5,16 @@ import { fieldErrors } from "../common/zod.js";
 import { limitKey, RateLimitService } from "../common/rate-limit.service.js";
 import type { Database } from "../db/client.js";
 import { InjectDb } from "../db/db.module.js";
-import { applicationAnswers, applications, candidates, companies, type JobRow, jobs } from "../db/schema.js";
+import {
+  applicationAnswers,
+  applications,
+  candidateEvents,
+  type CandidateRow,
+  candidates,
+  companies,
+  type JobRow,
+  jobs,
+} from "../db/schema.js";
 import { checkCv } from "../files/cv-file.js";
 import { PrivateFilesService } from "../files/private-files.service.js";
 import { loadQuestions } from "../jobs/job-questions.js";
@@ -14,6 +23,9 @@ import { isJobVisible } from "../shared/jobs/visibility.js";
 import { applySchema } from "./applications.schemas.js";
 
 /** 5 applications per visitor per hour: plenty for a person, little for a bot. */
+/** submitted: on its way to the employer. held: waiting for the candidate to confirm their email. */
+export type ApplyOutcome = "submitted" | "held" | "already_applied";
+
 const APPLY_LIMIT = 5;
 const APPLY_WINDOW_SECONDS = 60 * 60;
 /** And 20 per email address per day, however many connections they come from. */
@@ -68,14 +80,20 @@ export class ApplyService {
   }
 
   /**
-   * Checks everything first (fields, answers, CV), stores the CV, then saves the candidate,
-   * application and answers in one transaction. A CV whose application never got saved is deleted
-   * by the files sweep. The emails go out from the scheduler.
+   * The signed-in candidate applies. Checks everything first (fields, answers, CV), stores the CV,
+   * then saves the application and answers in one transaction. A CV whose application never got
+   * saved is deleted by the files sweep. The emails go out from the scheduler.
    *
-   * Applying twice to the same job looks like success but saves nothing: an error would let anyone
-   * find out whether a given email address applied for a given job.
+   * The email is always the account's own. From an account whose email isn't confirmed yet, the
+   * application is held (hidden from the employer, not emailed) until they confirm.
    */
-  async apply(ip: string, slug: string, body: unknown, cv: UploadedCv | undefined): Promise<void> {
+  async apply(
+    ip: string,
+    slug: string,
+    body: unknown,
+    cv: UploadedCv | undefined,
+    candidate: CandidateRow,
+  ): Promise<ApplyOutcome> {
     await this.rateLimit.enforce(
       limitKey("apply", ip),
       APPLY_LIMIT,
@@ -88,7 +106,7 @@ export class ApplyService {
     const errors: Record<string, string> = parsed.success ? {} : fieldErrors(parsed.error);
     if (parsed.success && parsed.data.website) {
       this.logger.warn(`Ignored a bot application for ${slug}`);
-      return; // looks like success to the bot
+      return "submitted"; // looks like success to the bot
     }
     const questions = await loadQuestions(this.db, job.id);
     const answers = checkAnswers(questions, parsed.success ? parsed.data.answers : {});
@@ -98,7 +116,13 @@ export class ApplyService {
     if (!parsed.success || Object.keys(errors).length || !cv || !cvCheck.ok) {
       throw new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", errors);
     }
-    const fields = parsed.data;
+    const fields = { ...parsed.data, email: candidate.email };
+    const [already] = await this.db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(and(eq(applications.jobId, job.id), eq(applications.candidateId, candidate.id)))
+      .limit(1);
+    if (already) return "already_applied";
     await this.rateLimit.enforce(
       limitKey("apply-email", fields.email),
       EMAIL_LIMIT,
@@ -108,25 +132,13 @@ export class ApplyService {
 
 
     const file = await this.files.saveCv(cv.buffer, cv.originalname, cvCheck.type, cvCheck.contentType);
-    // Checked after storing the CV so a repeat takes as long as a real application (its unused
-    // copy goes in the files sweep): response times don't reveal who applied either.
-    const [repeat] = await this.db
-      .select({ id: applications.id })
-      .from(applications)
-      .innerJoin(candidates, eq(candidates.id, applications.candidateId))
-      .where(and(eq(applications.jobId, job.id), eq(candidates.email, fields.email)))
-      .limit(1);
-    if (repeat) return;
     const now = new Date();
+    const held = candidate.emailVerifiedAt === null;
     const saved = await this.db.transaction(async (tx) => {
-      const [candidate] = await tx
-        .insert(candidates)
-        .values({ email: fields.email, name: fields.name, phone: fields.phone })
-        .onConflictDoUpdate({
-          target: candidates.email,
-          set: { name: fields.name, phone: fields.phone, updatedAt: now },
-        })
-        .returning({ id: candidates.id });
+      await tx
+        .update(candidates)
+        .set({ phone: fields.phone, updatedAt: now })
+        .where(eq(candidates.id, candidate.id));
       const [application] = await tx
         .insert(applications)
         .values({
@@ -141,6 +153,7 @@ export class ApplyService {
           linkedinUrl: fields.linkedinUrl ?? null,
           coverLetter: fields.coverLetter ?? null,
           consentAt: now,
+          awaitingConfirmation: held,
         })
         .onConflictDoNothing({ target: [applications.jobId, applications.candidateId] })
         .returning({ id: applications.id });
@@ -154,8 +167,10 @@ export class ApplyService {
         value: answers.values.get(q.id) ?? null,
       }));
       if (rows.length) await tx.insert(applicationAnswers).values(rows);
+      await tx.insert(candidateEvents).values({ candidateId: candidate.id, kind: "applied", jobId: job.id });
       return true;
     });
-    if (!saved) return; // a second submit that raced the first: same answer as a repeat
+    if (!saved) return "already_applied"; // a second submit that raced the first
+    return held ? "held" : "submitted";
   }
 }
