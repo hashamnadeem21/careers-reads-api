@@ -181,6 +181,11 @@ export const jobs = pgTable(
     experience: text("experience").notNull(),
     salary: text("salary"),
     summary: text("summary").notNull(),
+    /**
+     * The job ad as sanitized HTML from the admin's rich-text editor. When set, the site shows it
+     * instead of the summary and lists, and the summary is derived from it. Null on older jobs.
+     */
+    description: text("description"),
     responsibilities: text("responsibilities").array().notNull().default(sql`'{}'::text[]`),
     requirements: text("requirements").array().notNull().default(sql`'{}'::text[]`),
     benefits: text("benefits").array().notNull().default(sql`'{}'::text[]`),

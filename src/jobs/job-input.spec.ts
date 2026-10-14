@@ -61,3 +61,35 @@ describe("helpers", () => {
     expect(jobSlugFrom("UI/UX Designer", "Acme & Sons")).toBe("ui-ux-designer-acme-and-sons");
   });
 });
+
+describe("job description", () => {
+  const description =
+    '<p>We are hiring a <strong>frontend developer</strong> to build our product.</p><ul><li>React</li></ul><script>alert(1)</script><p><a href="javascript:alert(1)">x</a> <a href="https://example.com">site</a></p>';
+
+  it("sanitizes the HTML and derives the summary from it", () => {
+    const parsed = parse({ description, summary: "" });
+    expect(parsed.errors).toEqual({});
+    expect(parsed.data?.description).not.toMatch(/script|javascript/);
+    expect(parsed.data?.description).toContain("<strong>frontend developer</strong>");
+    expect(parsed.data?.description).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer nofollow">site</a>');
+    expect(parsed.data?.summary).toBe("We are hiring a frontend developer to build our product. React x site");
+  });
+
+  it("treats an empty editor as no description and keeps the typed summary", () => {
+    const parsed = parse({ description: "<p></p>" });
+    expect(parsed.data?.description).toBeUndefined();
+    expect(parsed.data?.summary).toBe(valid.summary);
+  });
+
+  it("reports a too-short description on the description field", () => {
+    const parsed = parse({ description: "<p>Too short</p>", summary: "" });
+    expect(parsed.errors.description).toBeDefined();
+    expect(parsed.errors.summary).toBeUndefined();
+  });
+
+  it("cuts long summaries at a word", () => {
+    const parsed = parse({ description: `<p>${"word ".repeat(100)}</p>`, summary: "" });
+    expect(parsed.data?.summary.length).toBeLessThanOrEqual(240);
+    expect(parsed.data?.summary.endsWith("word…")).toBe(true);
+  });
+});

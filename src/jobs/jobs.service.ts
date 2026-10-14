@@ -62,6 +62,7 @@ function toRow(data: JobInput, publishing: Publishing) {
     experience: data.experience,
     salary: data.salary ?? null,
     summary: data.summary,
+    description: data.description ?? null,
     responsibilities: data.responsibilities,
     requirements: data.requirements,
     benefits: data.benefits,
@@ -178,8 +179,9 @@ export class JobsService {
 
   /**
    * Create (`originalSlug` null) or update a job.
-   * Company accounts: the company name comes from their account, "Featured" stays as it was,
-   * and publishing goes through review unless the company is trusted.
+   * Company accounts: the company name comes from their account, and publishing goes through
+   * review unless the company is trusted. Only a super admin can feature a job (featured slots
+   * are an ad placement); for everyone else "Featured" stays as it was.
    */
   async save(user: AuthUser, originalSlug: string | null, body: JobBody): Promise<SaveJobResult> {
     const parsed = parseJobBody(body);
@@ -195,12 +197,12 @@ export class JobsService {
     if (!category) throw invalid({ category: "Pick a job category" });
 
     const existing = originalSlug ? await this.load(user, originalSlug) : null;
+    if (user.role !== "super_admin") data.featured = existing?.featured ?? false;
 
     // Which company account owns the job.
     let companyId: string | null;
     if (user.role === "company") {
       companyId = user.companyId;
-      data.featured = existing?.featured ?? false; // featuring is a Career Reads decision
     } else {
       companyId = z.uuid().safeParse(body.companyId).success ? body.companyId : null;
       if (companyId) {

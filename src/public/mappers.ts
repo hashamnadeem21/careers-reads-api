@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ArticleRow, AuthorRow, JobRow } from "../db/schema.js";
 import { articleFrontmatterSchema, authorSchema, type Article, type Author } from "../shared/content/schema.js";
 import { extractToc } from "../shared/content/toc.js";
+import { sanitizeJobHtml } from "../jobs/job-html.js";
 import { jobSchema, type Job } from "../shared/jobs/schema.js";
 
 const logger = new Logger("Content");
@@ -74,6 +75,8 @@ export function rowToJob(row: JobRow): Job | null {
     experience: row.experience,
     salary: row.salary ?? undefined,
     summary: row.summary,
+    // Sanitized again on the way out, in case a row was written without going through the API.
+    description: row.description ? sanitizeJobHtml(row.description) : undefined,
     responsibilities: row.responsibilities,
     requirements: row.requirements,
     benefits: row.benefits,

@@ -10,6 +10,7 @@ import { connectTestDb, resetTestDb } from "./helpers/test-db.js";
 let connection: DbConnection;
 let app: NestExpressApplication;
 let editor: { authorization: string };
+let superAdmin: { authorization: string };
 let acme: { authorization: string };
 let globex: { authorization: string };
 let acmeId: string;
@@ -44,6 +45,8 @@ beforeAll(async () => {
   await createCategory(connection.db, { slug: "software-it", kind: "job", name: "Software & IT" });
   const staff = await createUser(connection.db, { role: "editor" });
   editor = bearer((await login(app, staff.email)).accessToken);
+  const owner = await createUser(connection.db, { role: "super_admin" });
+  superAdmin = bearer((await login(app, owner.email)).accessToken);
 
   const acmeCo = await createCompany(connection.db, { name: "Acme" });
   acmeId = acmeCo.id;
@@ -82,6 +85,20 @@ describe("jobs (staff)", () => {
     expect(off.body.message).toMatch(/^Unpublished\./);
     expect(await publicSlugs()).not.toContain("backend-engineer-quality-assurance-labs");
     await http().get("/public/jobs/backend-engineer-quality-assurance-labs").expect(404);
+  });
+
+  it("only a super admin can feature a job", async () => {
+    const draft = (over: Record<string, unknown>) => job({ slug: "featured-test", status: "draft", ...over });
+    const created = await http().post("/jobs").set(editor).send(draft({ featured: true })).expect(201);
+    expect(created.body.job.featured).toBe(false);
+
+    const featured = await http().patch("/jobs/featured-test").set(superAdmin).send(draft({ featured: true })).expect(200);
+    expect(featured.body.job.featured).toBe(true);
+
+    // An editor's save keeps the super admin's choice.
+    const edited = await http().patch("/jobs/featured-test").set(editor).send(draft({ featured: false })).expect(200);
+    expect(edited.body.job.featured).toBe(true);
+    await http().delete("/jobs/featured-test").set(editor).expect(204);
   });
 
   it("returns field errors and refuses taken slugs and unknown categories", async () => {
