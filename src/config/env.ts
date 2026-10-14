@@ -47,6 +47,18 @@ const envSchema = z.object({
   UPLOADS_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
   /** Production refuses local uploads unless this is "true" (e2e runs of a production build). */
   ALLOW_LOCAL_UPLOADS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("false")),
+  /**
+   * CVs and other files that must never be public. A token for a *private* Vercel Blob store
+   * (separate from the public media store), or else PRIVATE_FILES_DIR on this server.
+   */
+  PRIVATE_BLOB_READ_WRITE_TOKEN: optional(z.string()),
+  /**
+   * Private files on this server's disk (never served by Nginx). Production must set it to a
+   * persistent volume when there's no private Blob token. Development: .data/private-files.
+   */
+  PRIVATE_FILES_DIR: optional(z.string()),
+  /** Applications (and their CVs) are deleted this many days after the job's deadline or the application, whichever is later. */
+  APPLICATION_RETENTION_DAYS: z.preprocess(emptyToUndefined, z.coerce.number().int().min(30).default(180)),
   /** Resend (https://resend.com) API key. Without it newsletters can be written but not sent. */
   RESEND_API_KEY: optional(z.string().min(1)),
   /** Newsletter sender on a domain verified in Resend, e.g. "Career Reads <newsletter@careersreads.com>". */
@@ -64,6 +76,12 @@ const envSchema = z.object({
   API_PUBLIC_URL: optional(z.url().transform((value) => value.replace(/\/+$/, ""))),
   /** Runs the every-minute scheduler (scheduled newsletters, automation emails). Tests turn it off. */
   SCHEDULER_ENABLED: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("true")),
+  /**
+   * Serve the API reference (/docs and /docs-json). Off in production unless set to "true": it maps
+   * every endpoint, which helps attackers more than anyone else. The admin and website generate
+   * their types from a local API.
+   */
+  API_DOCS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).optional()),
   /** Comma-separated browser origins allowed by CORS. Empty = CORS off (server-to-server only). */
   CORS_ORIGINS: z.preprocess(
     emptyToUndefined,

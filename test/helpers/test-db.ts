@@ -12,6 +12,12 @@ export const TEST_ADMIN_API_KEY = "test-admin-key-0123456789abcdef0123456789abcd
 export const TEST_SITE_API_KEY = "test-site-key-0123456789abcdef0123456789abcdef0";
 
 const TABLES = [
+  "application_events",
+  "application_answers",
+  "applications",
+  "job_questions",
+  "candidates",
+  "private_files",
   "sessions",
   "invites",
   "user_prefs",

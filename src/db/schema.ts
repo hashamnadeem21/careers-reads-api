@@ -6,6 +6,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  bigserial,
   boolean,
   check,
   date,
@@ -16,6 +17,7 @@ import {
   pgTable,
   primaryKey,
   serial,
+  smallint,
   text,
   timestamp,
   unique,
@@ -43,6 +45,29 @@ export const automationTrigger = pgEnum("automation_trigger", ["subscribed"]);
 /** skipped: they unsubscribed, the automation was switched off, or it was days overdue. */
 export const automationDeliveryStatus = pgEnum("automation_delivery_status", ["pending", "sent", "failed", "skipped"]);
 
+/** Where an application is in the employer's hiring pipeline. */
+export const applicationStatus = pgEnum("application_status", [
+  "new",
+  "reviewed",
+  "shortlisted",
+  "interviewing",
+  "offered",
+  "hired",
+  "rejected",
+  "withdrawn",
+]);
+/** The kinds of screening question an employer can add to a job's application form. */
+export const questionKind = pgEnum("question_kind", [
+  "short_text",
+  "long_text",
+  "yes_no",
+  "single_choice",
+  "multi_choice",
+  "number",
+  "url",
+]);
+export const applicationEventKind = pgEnum("application_event_kind", ["status_changed", "note", "cv_viewed"]);
+
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
 /** Employers that post jobs through their own company accounts. */
@@ -54,6 +79,8 @@ export const companies = pgTable("companies", {
   autoPublish: boolean("auto_publish").notNull().default(false),
   /** Paused companies can't sign in; their jobs stay as they are. */
   active: boolean("active").notNull().default(true),
+  /** Set by a super admin: the company's jobs may take applications on Career Reads. */
+  onsiteApplyEnabled: boolean("onsite_apply_enabled").notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -162,6 +189,8 @@ export const jobs = pgTable(
   "jobs",
   {
     slug: text("slug").primaryKey(),
+    /** Never changes (the slug does when a job is renamed): what applications and questions point at. */
+    id: uuid("id").notNull().unique().defaultRandom(),
     title: text("title").notNull(),
     /** Display name shown on the site. For company-account jobs it always equals companies.name. */
     company: text("company").notNull(),
@@ -189,6 +218,11 @@ export const jobs = pgTable(
     responsibilities: text("responsibilities").array().notNull().default(sql`'{}'::text[]`),
     requirements: text("requirements").array().notNull().default(sql`'{}'::text[]`),
     benefits: text("benefits").array().notNull().default(sql`'{}'::text[]`),
+    /**
+     * Candidates can apply on Career Reads (the application form; CVs collected in the admin).
+     * The apply link or email, when set, is offered alongside it as "Apply on company site".
+     */
+    onsiteApply: boolean("onsite_apply").notNull().default(false),
     applyUrl: text("apply_url"),
     applyEmail: text("apply_email"),
     postedAt: timestamp("posted_at", { withTimezone: true }).notNull(),
@@ -207,6 +241,146 @@ export const jobs = pgTable(
     index("jobs_company_idx").on(t.companyId),
     index("jobs_review_idx").on(t.review),
   ],
+);
+
+/** Screening questions on a job's application form (on-site applications only), in `position` order. */
+export const jobQuestions = pgTable(
+  "job_questions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    position: smallint("position").notNull(),
+    kind: questionKind("kind").notNull(),
+    label: text("label").notNull(),
+    helpText: text("help_text"),
+    /** The choices for single_choice and multi_choice; empty otherwise. */
+    options: text("options").array().notNull().default(sql`'{}'::text[]`),
+    required: boolean("required").notNull().default(false),
+  },
+  (t) => [index("job_questions_job_idx").on(t.jobId, t.position)],
+);
+
+/**
+ * One row per person who has applied for any job, matched by email. Companies never read this
+ * table: it links a person's applications so they can be found (and deleted) on request.
+ */
+export const candidates = pgTable(
+  "candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Always lowercase. */
+    email: text("email").notNull().unique(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("candidates_email_lowercase", sql`${t.email} = lower(${t.email})`)],
+);
+
+/**
+ * Files that must never be public (CVs). Stored under `storageKey` in private storage and only
+ * served through the API after an access check. Rows nobody references are swept, file and all.
+ */
+export const privateFiles = pgTable(
+  "private_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storageKey: text("storage_key").notNull().unique(),
+    originalName: text("original_name").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("private_files_created_idx").on(t.createdAt)],
+);
+
+/**
+ * An application made on Career Reads. The contact details are what the candidate sent to this
+ * employer (a copy, so later applications elsewhere don't change it). `companyId` is the job's
+ * company at the time of applying, copied here so every company query filters on one indexed
+ * column; null for jobs posted by Career Reads staff.
+ */
+export const applications = pgTable(
+  "applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "restrict" }),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "cascade" }),
+    resumeFileId: uuid("resume_file_id")
+      .notNull()
+      .references(() => privateFiles.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    phone: text("phone").notNull(),
+    location: text("location"),
+    linkedinUrl: text("linkedin_url"),
+    coverLetter: text("cover_letter"),
+    status: applicationStatus("status").notNull().default("new"),
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When they ticked the privacy consent box. */
+    consentAt: timestamp("consent_at", { withTimezone: true }).notNull(),
+    /** Set once the employer and candidate emails have gone out (the scheduler retries until then). */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    notifyAttempts: smallint("notify_attempts").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("applications_once_per_job").on(t.jobId, t.candidateId),
+    index("applications_company_idx").on(t.companyId, t.createdAt.desc()),
+    index("applications_job_idx").on(t.jobId, t.status, t.createdAt.desc()),
+    index("applications_candidate_idx").on(t.candidateId),
+    index("applications_resume_idx").on(t.resumeFileId),
+    index("applications_unnotified_idx").on(t.createdAt).where(sql`${t.notifiedAt} is null`),
+  ],
+);
+
+/** Answers to a job's screening questions, with the question as it was asked. */
+export const applicationAnswers = pgTable(
+  "application_answers",
+  {
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    position: smallint("position").notNull(),
+    /** Null once the employer deletes the question; the label and answer stay. */
+    questionId: uuid("question_id").references(() => jobQuestions.id, { onDelete: "set null" }),
+    kind: questionKind("kind").notNull(),
+    label: text("label").notNull(),
+    /** string (text, choice, url), string[] (multi_choice), boolean (yes_no), number, or null (skipped). */
+    value: jsonb("value").$type<string | string[] | boolean | number | null>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.applicationId, t.position] }),
+    index("application_answers_question_idx").on(t.questionId),
+  ],
+);
+
+/** An application's history: status changes, private notes, and who opened the CV. */
+export const applicationEvents = pgTable(
+  "application_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    kind: applicationEventKind("kind").notNull(),
+    fromStatus: applicationStatus("from_status"),
+    toStatus: applicationStatus("to_status"),
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("application_events_application_idx").on(t.applicationId, t.createdAt)],
 );
 
 export const media = pgTable("media", {
@@ -447,3 +621,8 @@ export type AutomationDeliveryStatus = (typeof automationDeliveryStatus.enumValu
 export type CompanyRow = typeof companies.$inferSelect;
 export type Role = (typeof userRole.enumValues)[number];
 export type JobReview = (typeof jobReview.enumValues)[number];
+export type ApplicationStatus = (typeof applicationStatus.enumValues)[number];
+export type QuestionKind = (typeof questionKind.enumValues)[number];
+export type JobQuestionRow = typeof jobQuestions.$inferSelect;
+export type ApplicationRow = typeof applications.$inferSelect;
+export type PrivateFileRow = typeof privateFiles.$inferSelect;

@@ -130,7 +130,7 @@ describe("jobs (staff)", () => {
       .send(job({ slug: "backend-engineer" }))
       .expect(200);
     const detail = await http().get("/jobs/backend-engineer").set(editor).expect(200);
-    expect(detail.body.stats).toEqual({ views: 4, applies: 0 });
+    expect(detail.body.stats).toEqual({ views: 4, applies: 0, applications: 0 });
 
     const copy = await http().post("/jobs/backend-engineer/duplicate").set(editor).expect(201);
     expect(copy.body).toEqual({ slug: "backend-engineer-copy", message: "Copied as a new draft." });

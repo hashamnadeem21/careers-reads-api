@@ -10,12 +10,14 @@ import {
   articles,
   authors,
   categories,
+  companies,
   jobs,
   liveVisitors,
   messages,
   settings,
   subscribers,
   type CategoryRow,
+  type JobRow,
 } from "../db/schema.js";
 import type { Article, ArticleSummary, Author } from "../shared/content/schema.js";
 import { isPubliclyVisible, toSummary } from "../shared/content/visibility.js";
@@ -71,16 +73,35 @@ export class PublicService {
     return article;
   }
 
+  /**
+   * Jobs with `onsiteApply` as the site should show it: a company job only takes applications on
+   * Career Reads while a super admin allows its company to.
+   */
+  private jobRows() {
+    return this.db
+      .select({ job: jobs, onsiteAllowed: sql<boolean>`coalesce(${companies.onsiteApplyEnabled}, true)` })
+      .from(jobs)
+      .leftJoin(companies, eq(companies.id, jobs.companyId))
+      .$dynamic();
+  }
+
+  private static toJob({ job, onsiteAllowed }: { job: JobRow; onsiteAllowed: boolean }): Job | null {
+    const onsiteApply = job.onsiteApply && onsiteAllowed;
+    // Its company lost on-site applications and there's no other way to apply: off the site.
+    if (!onsiteApply && !job.applyUrl && !job.applyEmail) return null;
+    return rowToJob({ ...job, onsiteApply });
+  }
+
   /** Visible jobs: featured first, then newest. Drafts, future and expired jobs never appear. */
   async listJobs(): Promise<Job[]> {
-    const rows = await this.db.select().from(jobs).orderBy(desc(jobs.featured), desc(jobs.postedAt));
+    const rows = await this.jobRows().orderBy(desc(jobs.featured), desc(jobs.postedAt));
     const now = new Date();
-    return rows.map(rowToJob).filter((j): j is Job => j !== null && isJobVisible(j, now));
+    return rows.map((row) => PublicService.toJob(row)).filter((j): j is Job => j !== null && isJobVisible(j, now));
   }
 
   async getJob(slug: string): Promise<Job> {
-    const [row] = await this.db.select().from(jobs).where(eq(jobs.slug, slug)).limit(1);
-    const job = row ? rowToJob(row) : null;
+    const [row] = await this.jobRows().where(eq(jobs.slug, slug)).limit(1);
+    const job = row ? PublicService.toJob(row) : null;
     if (!job || !isJobVisible(job)) throw notFound("job");
     return job;
   }

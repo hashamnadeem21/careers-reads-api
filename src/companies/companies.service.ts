@@ -36,9 +36,14 @@ export class CompaniesService {
   }
 
   /** Companies for the staff job form's "Company account" picker. */
-  options(): Promise<{ id: string; name: string; website: string | null }[]> {
+  options(): Promise<{ id: string; name: string; website: string | null; onsiteApplyEnabled: boolean }[]> {
     return this.db
-      .select({ id: companies.id, name: companies.name, website: companies.website })
+      .select({
+        id: companies.id,
+        name: companies.name,
+        website: companies.website,
+        onsiteApplyEnabled: companies.onsiteApplyEnabled,
+      })
       .from(companies)
       .orderBy(asc(companies.name));
   }
@@ -77,20 +82,30 @@ export class CompaniesService {
     await this.assertNameFree(input.name);
     const [company] = await this.db
       .insert(companies)
-      .values({ name: input.name, website: input.website ?? null, autoPublish: input.autoPublish })
+      .values({
+        name: input.name,
+        website: input.website ?? null,
+        autoPublish: input.autoPublish,
+        onsiteApplyEnabled: input.onsiteApplyEnabled ?? false,
+      })
       .returning();
     await this.audit.log(admin, "created", "company", company.id, company.name);
     return company;
   }
 
-  /** Rename, change website or trust level. Renaming updates the name shown on all its jobs. */
+  /** Rename, change website, trust level or on-site applications. Renaming updates the name shown on all its jobs. */
   async update(admin: AuthUser, id: string, input: CompanyInput): Promise<CompanyRow> {
     await this.assertNameFree(input.name, id);
     const before = await this.get(id);
     const company = await this.db.transaction(async (tx) => {
       const [row] = await tx
         .update(companies)
-        .set({ name: input.name, website: input.website ?? null, autoPublish: input.autoPublish })
+        .set({
+          name: input.name,
+          website: input.website ?? null,
+          autoPublish: input.autoPublish,
+          ...(input.onsiteApplyEnabled !== undefined && { onsiteApplyEnabled: input.onsiteApplyEnabled }),
+        })
         .where(eq(companies.id, id))
         .returning();
       if (before.name !== input.name) await tx.update(jobs).set({ company: input.name }).where(eq(jobs.companyId, id));

@@ -31,7 +31,7 @@ export async function createUser(
 
 export async function createCompany(
   db: Database,
-  input: { name?: string; active?: boolean; autoPublish?: boolean } = {},
+  input: { name?: string; active?: boolean; autoPublish?: boolean; onsiteApplyEnabled?: boolean } = {},
 ) {
   const [company] = await db
     .insert(companies)
@@ -39,6 +39,7 @@ export async function createCompany(
       name: input.name ?? `Company ${randomUUID().slice(0, 8)}`,
       active: input.active ?? true,
       autoPublish: input.autoPublish ?? false,
+      onsiteApplyEnabled: input.onsiteApplyEnabled ?? false,
     })
     .returning();
   return company;
