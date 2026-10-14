@@ -16,11 +16,18 @@ export interface NewsletterContent {
   subject: string;
   previewText: string;
   body: string;
+  /** Banner image above the body (site path or https URL). */
+  heroImage?: string;
+  /** Button after the body; shown when `ctaUrl` is set ("Read more" without a label). */
+  ctaLabel?: string;
+  ctaUrl?: string;
 }
 
 export interface RenderOptions {
   /** The website's origin; relative links and images (e.g. /uploads/…) are resolved against it. */
   siteUrl: string;
+  /** Where images load from, when not `siteUrl` (inboxes can't reach a localhost site). */
+  assetsUrl?: string;
   /** This subscriber's unsubscribe page. */
   unsubscribeUrl: string;
   postalAddress?: string;
@@ -32,6 +39,8 @@ const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial
 const INK = "#0f172a";
 const MUTED = "#64748b";
 const LINK = "#2563eb";
+const BRAND = "#2563eb";
+const PAGE = "#eef2f7";
 
 /** Inline styles per tag. Anything not listed keeps the inbox's defaults. */
 const TAG_STYLES: Record<string, string> = {
@@ -67,15 +76,15 @@ function absolute(url: string, base: string): string {
 }
 
 /** rehype plugin: inline styles, absolute URLs, and links that open in a new tab. */
-function emailify(siteUrl: string) {
+function emailify(siteUrl: string, assetsUrl: string) {
   const visit = (node: Root | RootContent) => {
-    if (node.type === "element") styleElement(node, siteUrl);
+    if (node.type === "element") styleElement(node, siteUrl, assetsUrl);
     if ("children" in node) node.children.forEach(visit);
   };
   return () => (tree: Root) => visit(tree);
 }
 
-function styleElement(node: Element, siteUrl: string) {
+function styleElement(node: Element, siteUrl: string, assetsUrl: string) {
   const style = TAG_STYLES[node.tagName];
   if (style) node.properties.style = style;
   if (node.tagName === "a" && typeof node.properties.href === "string") {
@@ -84,56 +93,98 @@ function styleElement(node: Element, siteUrl: string) {
     node.properties.rel = ["noopener"];
   }
   if (node.tagName === "img" && typeof node.properties.src === "string") {
-    node.properties.src = absolute(node.properties.src, siteUrl);
+    node.properties.src = absolute(node.properties.src, assetsUrl);
   }
 }
 
 /** Markdown → sanitised, inline-styled HTML (the email's content area only). */
-export function markdownToEmailHtml(markdown: string, siteUrl: string): string {
+export function markdownToEmailHtml(markdown: string, siteUrl: string, assetsUrl = siteUrl): string {
   return String(
     unified()
       .use(remarkParse)
       .use(remarkGfm)
       .use(remarkRehype)
       .use(rehypeSanitize)
-      .use(emailify(siteUrl))
+      .use(emailify(siteUrl, assetsUrl))
       .use(rehypeStringify)
       .processSync(markdown),
   );
 }
 
-/** The full email: HTML (with a hidden preview line) and a plain-text version. */
+/** Hidden after the preview line so inboxes don't pad it with the start of the email. */
+const PREHEADER_FILLER = "&#8199;&#847;&zwnj;&nbsp;".repeat(60);
+
+/** A button built from a table cell, so Outlook draws it too. */
+function button(label: string, href: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px">
+<tr><td align="center" bgcolor="${BRAND}" style="border-radius:10px;background:${BRAND}">
+<a href="${escapeHtml(href)}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:${FONT};font-size:16px;font-weight:700;line-height:1;color:#ffffff;text-decoration:none;border-radius:10px">${escapeHtml(label)}</a>
+</td></tr>
+</table>`;
+}
+
+/**
+ * The full email: HTML and a plain-text version. Layout, top to bottom: hidden preview line, brand
+ * bar, logo with the site's sections, optional banner image, the body, optional button, a short
+ * "why Career Reads" band, and the footer with the unsubscribe link.
+ */
 export function renderNewsletter(content: NewsletterContent, options: RenderOptions): { html: string; text: string } {
-  const { siteUrl, unsubscribeUrl, postalAddress } = options;
+  const { siteUrl, unsubscribeUrl, postalAddress, assetsUrl = siteUrl } = options;
   const site = escapeHtml(siteUrl);
-  const footer = [
-    `You're receiving this because you subscribed to the ${SITE_NAME} newsletter.`,
-    postalAddress ? escapeHtml(postalAddress) : "",
+  const link = (path: string) => escapeHtml(absolute(path, siteUrl));
+  const ctaUrl = content.ctaUrl?.trim() ? absolute(content.ctaUrl.trim(), siteUrl) : "";
+  const ctaLabel = content.ctaLabel?.trim() || "Read more";
+  const hero = content.heroImage?.trim() ? absolute(content.heroImage.trim(), assetsUrl) : "";
+  const heroImg = hero
+    ? `<img src="${escapeHtml(hero)}" width="600" alt="" style="display:block;width:100%;max-width:600px;height:auto;border:0">`
+    : "";
+  const nav = [
+    ["Latest jobs", "/jobs"],
+    ["Career guides", "/blog"],
+    ["Trending", "/trending"],
   ]
-    .filter(Boolean)
-    .join("<br>");
+    .map(([label, path]) => `<a href="${link(path)}" target="_blank" style="color:${MUTED};text-decoration:none">${label}</a>`)
+    .join(`<span style="color:#cbd5e1">&nbsp;&nbsp;·&nbsp;&nbsp;</span>`);
 
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <title>${escapeHtml(content.subject)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f1f5f9">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(content.previewText)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9">
-<tr><td align="center" style="padding:32px 12px">
+<body style="margin:0;padding:0;background:${PAGE};-webkit-text-size-adjust:100%">
+<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;mso-hide:all">${escapeHtml(content.previewText)}${PREHEADER_FILLER}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAGE}">
+<tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0">
+<tr><td height="5" style="height:5px;line-height:5px;font-size:0;background:${BRAND};background-image:linear-gradient(90deg,${BRAND},#0ea5e9)">&nbsp;</td></tr>
+<tr><td align="center" style="padding:26px 28px 18px;border-bottom:1px solid #eef2f7">
+<a href="${site}" target="_blank" style="text-decoration:none"><img src="${escapeHtml(absolute("/brand/careerreads-logo.png", assetsUrl))}" width="198" height="44" alt="${SITE_NAME}" style="display:block;width:198px;height:auto;border:0;font-family:${FONT};font-size:22px;font-weight:700;color:${INK}"></a>
+<div style="padding-top:14px;font-family:${FONT};font-size:13px;font-weight:600;letter-spacing:.2px">${nav}</div>
+</td></tr>
+${heroImg ? `<tr><td style="padding:0">${ctaUrl ? `<a href="${escapeHtml(ctaUrl)}" target="_blank">${heroImg}</a>` : heroImg}</td></tr>` : ""}
+<tr><td style="padding:32px 32px 12px;font-family:${FONT};font-size:16px;line-height:1.65;color:${INK}">
+${markdownToEmailHtml(content.body, siteUrl, assetsUrl)}
+${ctaUrl ? button(ctaLabel, ctaUrl) : ""}
+</td></tr>
+<tr><td style="padding:16px 32px 32px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border-radius:12px">
+<tr><td style="padding:18px 20px;font-family:${FONT};font-size:14px;line-height:1.55;color:${INK}">
+<strong>New jobs every day, plus practical career guides.</strong><br>
+<span style="color:${MUTED}">Every listing links straight to the employer. Never pay anyone to apply.</span><br>
+<a href="${link("/jobs")}" target="_blank" style="display:inline-block;margin-top:8px;color:${LINK};font-weight:700;text-decoration:none">Browse the latest jobs &rarr;</a>
+</td></tr>
+</table>
+</td></tr>
+</table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
-<tr><td style="padding:0 8px 16px;font-family:${FONT};font-size:18px;font-weight:700">
-<a href="${site}" style="color:${INK};text-decoration:none">${SITE_NAME}</a>
-</td></tr>
-<tr><td style="background:#ffffff;border-radius:16px;padding:32px 28px;font-family:${FONT};font-size:16px;line-height:1.65;color:${INK}">
-${markdownToEmailHtml(content.body, siteUrl)}
-</td></tr>
-<tr><td style="padding:20px 8px;font-family:${FONT};font-size:12px;line-height:1.6;color:${MUTED};text-align:center">
-${footer}<br>
-<a href="${escapeHtml(unsubscribeUrl)}" style="color:${MUTED};text-decoration:underline">Unsubscribe</a> · <a href="${site}" style="color:${MUTED};text-decoration:underline">Visit ${SITE_NAME}</a>
+<tr><td style="padding:22px 16px 8px;font-family:${FONT};font-size:12px;line-height:1.7;color:${MUTED};text-align:center">
+You're receiving this because you subscribed to the ${SITE_NAME} newsletter.<br>
+${postalAddress ? `${escapeHtml(postalAddress)}<br>` : ""}<a href="${escapeHtml(unsubscribeUrl)}" style="color:${MUTED};text-decoration:underline">Unsubscribe</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="${site}" target="_blank" style="color:${MUTED};text-decoration:underline">Visit ${SITE_NAME}</a><br>
+&copy; ${new Date().getFullYear()} ${SITE_NAME}
 </td></tr>
 </table>
 </td></tr>
@@ -143,6 +194,7 @@ ${footer}<br>
 
   const text = [
     content.body.trim(),
+    ...(ctaUrl ? ["", `${ctaLabel}: ${ctaUrl}`] : []),
     "",
     "—",
     `You're receiving this because you subscribed to the ${SITE_NAME} newsletter.`,
