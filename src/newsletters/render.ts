@@ -21,6 +21,8 @@ export interface NewsletterContent {
   /** Button after the body; shown when `ctaUrl` is set ("Read more" without a label). */
   ctaLabel?: string;
   ctaUrl?: string;
+  /** Small print under the button (Markdown), e.g. a link to copy if the button doesn't work. */
+  afterButton?: string;
 }
 
 export interface RenderOptions {
@@ -65,6 +67,11 @@ const TAG_STYLES: Record<string, string> = {
   th: "border:1px solid #e2e8f0;padding:8px;text-align:left;background:#f8fafc",
   td: "border:1px solid #e2e8f0;padding:8px",
 };
+
+/** Text from people (names, titles) inside Markdown: shown literally, never as links or formatting. */
+export function escapeMarkdown(value: string): string {
+  return value.replace(/[\\`*_{}[\]()<>#+\-.!|~]/g, (c) => `\\${c}`);
+}
 
 export function escapeHtml(value: string): string {
   return value.replace(
@@ -180,6 +187,7 @@ ${heroImg ? `<tr><td style="padding:0">${ctaUrl ? `<a href="${escapeHtml(ctaUrl)
 <tr><td style="padding:32px 32px 12px;font-family:${FONT};font-size:16px;line-height:1.65;color:${INK}">
 ${markdownToEmailHtml(content.body, siteUrl, assetsUrl)}
 ${ctaUrl ? button(ctaLabel, ctaUrl) : ""}
+${content.afterButton?.trim() ? `<div style="margin-top:20px;font-size:13px;line-height:1.6;color:${MUTED}">${markdownToEmailHtml(content.afterButton, siteUrl, assetsUrl)}</div>` : ""}
 </td></tr>
 ${
   promo
@@ -210,6 +218,7 @@ ${postalAddress ? `${escapeHtml(postalAddress)}<br>` : ""}${unsubscribeUrl ? `<a
   const text = [
     content.body.trim(),
     ...(ctaUrl ? ["", `${ctaLabel}: ${ctaUrl}`] : []),
+    ...(content.afterButton?.trim() ? ["", content.afterButton.trim()] : []),
     "",
     "—",
     reason,

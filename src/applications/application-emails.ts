@@ -1,6 +1,6 @@
 import type { OutgoingEmail } from "../mail/mailer.service.js";
 import { emailAssetsUrl } from "../newsletters/compose.js";
-import { renderNewsletter, SITE_NAME } from "../newsletters/render.js";
+import { escapeMarkdown, renderNewsletter, SITE_NAME } from "../newsletters/render.js";
 
 export interface ApplicationEmailData {
   applicationId: string;
@@ -14,11 +14,6 @@ export interface EmailSettings {
   siteUrl: string;
   adminUrl: string;
   postalAddress?: string;
-}
-
-/** Candidate-supplied text inside Markdown: shown literally, never as links or formatting. */
-export function escapeMarkdown(value: string): string {
-  return value.replace(/[\\`*_{}[\]()<>#+\-.!|~]/g, (c) => `\\${c}`);
 }
 
 function render(
