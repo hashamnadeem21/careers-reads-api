@@ -12,14 +12,19 @@ import { roleLabels } from "../auth/auth-user.js";
 import { AuthService, PAUSED_MESSAGE, type SignedIn } from "../auth/auth.service.js";
 import { hashPassword } from "../auth/password.js";
 import { hashToken, SessionsService } from "../auth/sessions.service.js";
+import { MailerService } from "../mail/mailer.service.js";
+import { inviteEmail } from "./invite-email.js";
 
 const INVITE_DAYS = 7;
 
 export interface InviteCreated {
   message: string;
-  /** The one-time link to send. It's only ever shown once: the database keeps a hash. */
+  /** The one-time link, also emailed. It's only ever shown once: the database keeps a hash. */
   link: string;
   expiresAt: string;
+  /** Whether the invite email went out. When false, `emailError` says why and the link must be sent by hand. */
+  emailed: boolean;
+  emailError?: string;
 }
 
 const looksLikeToken = (token: string) => token.length >= 20 && token.length <= 100;
@@ -32,14 +37,16 @@ export class InvitesService {
     private readonly rateLimits: RateLimitService,
     private readonly sessions: SessionsService,
     private readonly auth: AuthService,
+    private readonly mailer: MailerService,
   ) {}
 
   /**
-   * Creates a one-time invite link (valid 7 days). No permission check of its own:
-   * callers (users and companies controllers) check first.
+   * Creates a one-time invite link (valid 7 days) and emails it to them. The link is also returned
+   * so it can be copied and sent another way; a failed email never fails the invite.
+   * No permission check of its own: callers (users and companies controllers) check first.
    */
   async create(
-    invitedBy: { id: string },
+    invitedBy: { id: string; name?: string },
     input: { email: string; name: string; role: Role; companyId: string | null },
   ): Promise<InviteCreated> {
     const { email, name, role, companyId } = input;
@@ -59,11 +66,54 @@ export class InvitesService {
         .values({ tokenHash: hashToken(token), email, name, role, companyId, invitedBy: invitedBy.id, expiresAt });
     });
     await this.audit.log(invitedBy, "invited", "user", null, `${name} (${roleLabels[role]})`);
+
+    const link = `${env().ADMIN_URL}/invite/${token}`;
+    const sent = await this.sendInvite({ email, name, role, companyId, link, expiresAt, inviterName: invitedBy.name });
     return {
-      message: `Invite created for ${name}. Send them the link below.`,
-      link: `${env().ADMIN_URL}/invite/${token}`,
+      message: sent.ok
+        ? `Invite emailed to ${email}. You can also copy the link below.`
+        : `Invite created, but the email couldn't be sent. Copy the link below and send it to ${name}.`,
+      link,
       expiresAt: expiresAt.toISOString(),
+      emailed: sent.ok,
+      ...(!sent.ok && { emailError: sent.error }),
     };
+  }
+
+  private async sendInvite(input: {
+    email: string;
+    name: string;
+    role: Role;
+    companyId: string | null;
+    link: string;
+    expiresAt: Date;
+    inviterName?: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const missing = this.mailer.missingConfig();
+    if (missing) return { ok: false, error: `Email isn't set up on the server (${missing}).` };
+    const companyName = input.companyId
+      ? ((
+          await this.db
+            .select({ name: companies.name })
+            .from(companies)
+            .where(eq(companies.id, input.companyId))
+            .limit(1)
+        )[0]?.name ?? null)
+      : null;
+    const { PUBLIC_SITE_URL, NEWSLETTER_POSTAL_ADDRESS } = env();
+    const email = inviteEmail(
+      {
+        to: input.email,
+        name: input.name,
+        inviterName: input.inviterName,
+        companyName,
+        roleLabel: roleLabels[input.role],
+        link: input.link,
+        expiresAt: input.expiresAt,
+      },
+      { siteUrl: PUBLIC_SITE_URL, postalAddress: NEWSLETTER_POSTAL_ADDRESS },
+    );
+    return this.mailer.sendBatch([email]);
   }
 
   async revoke(admin: { id: string }, email: string): Promise<void> {
