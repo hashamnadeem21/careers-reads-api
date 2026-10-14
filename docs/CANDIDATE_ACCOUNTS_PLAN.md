@@ -1,6 +1,15 @@
 # Plan: candidate sign-in (Google), welcome email and subscribe-after-apply
 
-Status: **in progress.** Phase 1 (API) is built on branch `feature/candidate-accounts`; phases 2–6 are next.
+Status: **built, in review.** Phases 1–5 are built and tested on branch `feature/candidate-accounts` in all three repos. Phase 6 (launch checklist) is left: publish the Google consent screen, add the production origins, set the env vars, deploy.
+
+### As built (differences from the plan below)
+
+- **Sign-in lives on the apply page, not in a dialog on the job page.** "Apply on Career Reads" still links to `/jobs/[slug]/apply`; signed out, that page shows the sign-in panel (Google, Create account, Sign in, Forgot password) and, once signed in, the form for the same job. Same flow, no `returnTo` to carry around, and the gate is enforced on the server. `/account/sign-in?next=` is the same panel on its own page.
+- **Pages:** `/account` (email status + resend link, newsletter, sign out, delete account), `/account/confirm-email` (a button press, so email scanners can't use up the link), `/account/reset-password`. None are indexed; `/account/` is disallowed in robots.txt.
+- **Header:** a small "Sign in" button (desktop) or an avatar menu with My account / Sign out. On phones it's inside the menu, so the header still fits at 360px. It reads `/api/candidate/me` in the browser, so every page stays static.
+- **Email confirmation (added after the plan):** the welcome email's button is "Confirm your email" for password accounts (Google accounts are already confirmed). An application sent before confirming is held (`applications.awaiting_confirmation`): hidden from employers, Applicants and counts, and not emailed, until they confirm or reset their password. If someone signs in with Google for an email that has an unconfirmed password account, Google wins: the password and sessions end and held applications are deleted (they were never sent).
+- **Admin dashboard card:** not added. The Candidates page has its own stats (accounts, new this week, active this week, subscribed, Google vs password).
+- **Delete account:** candidates can delete their own account (`DELETE /public/candidate/me`); the super admin can too, from the candidate's page. Both remove applications, CVs and the newsletter subscription.
 
 ## 1. What we're building
 
