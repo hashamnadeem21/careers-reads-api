@@ -22,6 +22,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -33,6 +34,7 @@ import {
 export const userRole = pgEnum("user_role", ["super_admin", "editor", "company"]);
 /** Moderation of jobs posted by company accounts. Null for jobs posted by staff. */
 export const jobReview = pgEnum("job_review", ["pending", "approved", "rejected"]);
+export const companyRequestStatus = pgEnum("company_request_status", ["pending", "approved", "rejected"]);
 export const contentStatus = pgEnum("content_status", ["draft", "published"]);
 export const categoryKind = pgEnum("category_kind", ["blog", "job"]);
 export const authorType = pgEnum("author_type", ["Person", "Organization"]);
@@ -98,6 +100,45 @@ export const companies = pgTable("companies", {
   onsiteApplyEnabled: boolean("onsite_apply_enabled").notNull().default(false),
   createdAt: createdAt(),
 });
+
+/**
+ * A company asking for an account on the website's "For employers" page. A super admin reviews
+ * it: approving creates the company and invites the contact as its first admin account.
+ */
+export const companyRequests = pgTable(
+  "company_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyName: text("company_name").notNull(),
+    website: text("website"),
+    industry: text("industry").notNull(),
+    companySize: text("company_size").notNull(),
+    /** City and country. */
+    location: text("location").notNull(),
+    contactName: text("contact_name").notNull(),
+    /** Always lowercase. */
+    contactEmail: text("contact_email").notNull(),
+    contactPhone: text("contact_phone").notNull(),
+    /** Their job title, e.g. "HR Manager". */
+    contactRole: text("contact_role").notNull(),
+    /** What they're hiring for, in their words. */
+    hiringPlans: text("hiring_plans"),
+    status: companyRequestStatus("status").notNull().default("pending"),
+    /** Why it was turned down (sent to them when the reviewer chooses to). */
+    reviewNote: text("review_note"),
+    reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    /** The company created on approval. */
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("company_requests_status_idx").on(t.status, t.createdAt.desc()),
+    // One open request per email address: a second one while the first waits changes nothing.
+    uniqueIndex("company_requests_one_pending").on(t.contactEmail).where(sql`${t.status} = 'pending'`),
+    check("company_requests_email_lowercase", sql`${t.contactEmail} = lower(${t.contactEmail})`),
+  ],
+);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -717,6 +758,8 @@ export type NewsletterStatus = (typeof newsletterStatus.enumValues)[number];
 export type AutomationRow = typeof emailAutomations.$inferSelect;
 export type AutomationDeliveryStatus = (typeof automationDeliveryStatus.enumValues)[number];
 export type CompanyRow = typeof companies.$inferSelect;
+export type CompanyRequestRow = typeof companyRequests.$inferSelect;
+export type CompanyRequestStatus = (typeof companyRequestStatus.enumValues)[number];
 export type Role = (typeof userRole.enumValues)[number];
 export type JobReview = (typeof jobReview.enumValues)[number];
 export type ApplicationStatus = (typeof applicationStatus.enumValues)[number];

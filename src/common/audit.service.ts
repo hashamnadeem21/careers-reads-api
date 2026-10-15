@@ -4,7 +4,7 @@ import { InjectDb } from "../db/db.module.js";
 import { auditLog } from "../db/schema.js";
 
 export type AuditEntity =
-  "job" | "post" | "category" | "author" | "media" | "settings" | "user" | "message" | "subscriber" | "company" | "newsletter" | "automation" | "application" | "candidate";
+  "job" | "post" | "category" | "author" | "media" | "settings" | "user" | "message" | "subscriber" | "company" | "newsletter" | "automation" | "application" | "candidate" | "company_request";
 
 @Injectable()
 export class AuditService {
