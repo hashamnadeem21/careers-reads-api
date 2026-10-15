@@ -7,5 +7,6 @@ import { CompaniesService } from "./companies.service.js";
   imports: [UsersModule],
   controllers: [CompaniesController],
   providers: [CompaniesService],
+  exports: [CompaniesService],
 })
 export class CompaniesModule {}

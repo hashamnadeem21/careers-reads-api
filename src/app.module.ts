@@ -6,6 +6,7 @@ import { CandidatesModule } from "./candidates/candidates.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { RequestLoggerMiddleware } from "./common/request-logger.middleware.js";
 import { CompaniesModule } from "./companies/companies.module.js";
+import { CompanyRequestsModule } from "./company-requests/company-requests.module.js";
 import { DbModule } from "./db/db.module.js";
 import { PublicModule } from "./public/public.module.js";
 import { JobsModule } from "./jobs/jobs.module.js";
@@ -30,6 +31,7 @@ import { UsersModule } from "./users/users.module.js";
     AuthModule,
     UsersModule,
     CompaniesModule,
+    CompanyRequestsModule,
     PostsModule,
     JobsModule,
     ApplicationsModule,
