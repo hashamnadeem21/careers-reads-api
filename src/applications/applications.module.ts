@@ -7,11 +7,13 @@ import { ApplicationsPublicController } from "./applications-public.controller.j
 import { ApplicationsController } from "./applications.controller.js";
 import { ApplicationsService } from "./applications.service.js";
 import { ApplyService } from "./apply.service.js";
+import { MyApplicationsController } from "./my-applications.controller.js";
+import { MyApplicationsService } from "./my-applications.service.js";
 
 @Module({
   imports: [FilesModule, MailModule, CandidatesModule],
-  controllers: [ApplicationsPublicController, ApplicationsController],
-  providers: [ApplyService, ApplicationsService, ApplicationNotifier],
+  controllers: [ApplicationsPublicController, ApplicationsController, MyApplicationsController],
+  providers: [ApplyService, ApplicationsService, ApplicationNotifier, MyApplicationsService],
   exports: [ApplicationNotifier, FilesModule],
 })
 export class ApplicationsModule {}

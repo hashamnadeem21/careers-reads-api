@@ -3,7 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { and, eq, lt, notExists, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { InjectDb } from "../db/db.module.js";
-import { applications, type PrivateFileRow, privateFiles } from "../db/schema.js";
+import { applications, candidates, type PrivateFileRow, privateFiles } from "../db/schema.js";
 import { type CvType, downloadName } from "./cv-file.js";
 import { PrivateStorageService } from "./private-storage.service.js";
 
@@ -11,8 +11,9 @@ import { PrivateStorageService } from "./private-storage.service.js";
 const ORPHAN_GRACE_MINUTES = 60;
 
 /**
- * The `private_files` table and its storage, kept in step. Deleting an application only removes
- * database rows; `sweep()` then deletes every file nothing points at, from storage and table.
+ * The `private_files` table and its storage, kept in step. Deleting an application (or replacing a
+ * saved CV) only changes database rows; `sweep()` then deletes every file nothing points at, from
+ * storage and table.
  */
 @Injectable()
 export class PrivateFilesService {
@@ -53,7 +54,7 @@ export class PrivateFilesService {
     return this.storage.read(row.storageKey);
   }
 
-  /** Deletes up to `limit` files that no application uses any more. Returns how many went. */
+  /** Deletes up to `limit` files that no application or saved CV uses any more. Returns how many went. */
   async sweep(now = new Date(), limit = 200): Promise<number> {
     const cutoff = new Date(now.getTime() - ORPHAN_GRACE_MINUTES * 60_000);
     const orphans = await this.db
@@ -67,6 +68,12 @@ export class PrivateFilesService {
               .select({ one: sql`1` })
               .from(applications)
               .where(eq(applications.resumeFileId, privateFiles.id)),
+          ),
+          notExists(
+            this.db
+              .select({ one: sql`1` })
+              .from(candidates)
+              .where(eq(candidates.cvFileId, privateFiles.id)),
           ),
         ),
       )

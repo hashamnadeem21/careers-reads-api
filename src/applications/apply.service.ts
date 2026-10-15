@@ -81,8 +81,9 @@ export class ApplyService {
 
   /**
    * The signed-in candidate applies. Checks everything first (fields, answers, CV), stores the CV,
-   * then saves the application and answers in one transaction. A CV whose application never got
-   * saved is deleted by the files sweep. The emails go out from the scheduler.
+   * then saves the application and answers in one transaction. The CV is a new upload (which also
+   * becomes their saved CV) or, with `useSavedCv`, the one already on their account. A CV whose
+   * application never got saved is deleted by the files sweep. The emails go out from the scheduler.
    *
    * The email is always the account's own. From an account whose email isn't confirmed yet, the
    * application is held (hidden from the employer, not emailed) until they confirm.
@@ -111,9 +112,13 @@ export class ApplyService {
     const questions = await loadQuestions(this.db, job.id);
     const answers = checkAnswers(questions, parsed.success ? parsed.data.answers : {});
     if (parsed.success) Object.assign(errors, answers.errors);
-    const cvCheck = cv ? checkCv(cv.buffer) : ({ ok: false, error: "Attach your CV" } as const);
-    if (!cvCheck.ok) errors.cv = cvCheck.error;
-    if (!parsed.success || Object.keys(errors).length || !cv || !cvCheck.ok) {
+    // A new file wins; otherwise "use my saved CV" sends the one on their account.
+    const useSaved = !cv && parsed.success && parsed.data.useSavedCv === "true";
+    const savedFile = useSaved && candidate.cvFileId ? await this.files.get(candidate.cvFileId) : null;
+    const cvCheck = cv ? checkCv(cv.buffer) : null;
+    if (cvCheck && !cvCheck.ok) errors.cv = cvCheck.error;
+    else if (!cv && !savedFile) errors.cv = useSaved ? "Your saved CV is no longer available. Please upload it again" : "Attach your CV";
+    if (!parsed.success || Object.keys(errors).length) {
       throw new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", errors);
     }
     const fields = { ...parsed.data, email: candidate.email };
@@ -131,13 +136,16 @@ export class ApplyService {
     );
 
 
-    const file = await this.files.saveCv(cv.buffer, cv.originalname, cvCheck.type, cvCheck.contentType);
+    // A newly uploaded CV also becomes their saved CV, offered next time they apply.
+    const uploaded = cv && cvCheck?.ok ? await this.files.saveCv(cv.buffer, cv.originalname, cvCheck.type, cvCheck.contentType) : null;
+    const file = uploaded ?? savedFile;
+    if (!file) throw new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", { cv: "Attach your CV" });
     const now = new Date();
     const held = candidate.emailVerifiedAt === null;
     const saved = await this.db.transaction(async (tx) => {
       await tx
         .update(candidates)
-        .set({ phone: fields.phone, updatedAt: now })
+        .set({ phone: fields.phone, ...(uploaded ? { cvFileId: uploaded.id } : {}), updatedAt: now })
         .where(eq(candidates.id, candidate.id));
       const [application] = await tx
         .insert(applications)
