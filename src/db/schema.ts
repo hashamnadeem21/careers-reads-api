@@ -6,6 +6,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigserial,
   boolean,
   check,
@@ -303,6 +304,11 @@ export const candidates = pgTable(
     accountCreatedAt: timestamp("account_created_at", { withTimezone: true }),
     lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
     signInCount: integer("sign_in_count").notNull().default(0),
+    /**
+     * Their saved CV, offered when they apply again. Replacing it leaves the CVs already sent with
+     * applications alone (each application points at its own file).
+     */
+    cvFileId: uuid("cv_file_id").references((): AnyPgColumn => privateFiles.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

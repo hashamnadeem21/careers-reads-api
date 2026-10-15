@@ -300,7 +300,7 @@ describe("on-site applications", () => {
       .expect(200);
   });
 
-  it("only deletes a job with applicants when that's confirmed, then removes the CV", async () => {
+  it("only deletes a job with applicants when that's confirmed; the CV stays only as the candidate's saved CV", async () => {
     const refused = await http().delete(`/jobs/${slug}`).set(acme).expect(409);
     expect(refused.body.error).toMatchObject({ code: "has_applications", details: { applications: 1 } });
     await http().delete(`/jobs/${slug}?withApplications=true`).set(acme).expect(204);
@@ -308,7 +308,11 @@ describe("on-site applications", () => {
 
     const scheduler = app.get(SchedulerService);
     expect(await scheduler.housekeeping(new Date())).toEqual({ applications: 0, files: 0 }); // still within the grace hour
-    // Sara's CV (her repeat application was turned away before its CV was stored).
+    // Sara's CV is her saved CV too (her repeat application was turned away before its CV was stored).
+    expect(await scheduler.housekeeping(new Date(Date.now() + 2 * HOUR))).toEqual({ applications: 0, files: 0 });
+    expect(await connection.db.select().from(privateFiles)).toHaveLength(1);
+    // Once she removes it from her account, nothing uses it and it goes.
+    await http().delete("/public/candidate/cv").set(await signedIn("sara@example.com")).expect(204);
     expect(await scheduler.housekeeping(new Date(Date.now() + 2 * HOUR))).toEqual({ applications: 0, files: 1 });
     expect(await connection.db.select().from(privateFiles)).toHaveLength(0);
     expect((await readdir(filesDir, { recursive: true })).filter((f) => f.endsWith(".pdf"))).toEqual([]);

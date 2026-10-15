@@ -58,7 +58,11 @@ const linkToken = (text: string, path: string) => {
 
 const events = async (email: string) => {
   const [candidate] = await connection.db.select().from(candidates).where(eq(candidates.email, email));
-  const rows = await connection.db.select().from(candidateEvents).where(eq(candidateEvents.candidateId, candidate.id));
+  const rows = await connection.db
+    .select()
+    .from(candidateEvents)
+    .where(eq(candidateEvents.candidateId, candidate.id))
+    .orderBy(candidateEvents.id);
   return rows.map((row) => `${row.kind}${row.method ? `:${row.method}` : ""}`);
 };
 

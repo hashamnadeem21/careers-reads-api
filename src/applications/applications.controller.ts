@@ -29,13 +29,8 @@ import {
   noteSchema,
   setStatusSchema,
 } from "./applications.schemas.js";
+import { disposition, setFileHeaders } from "../files/download.js";
 import { ApplicationsService } from "./applications.service.js";
-
-/** RFC 6266 filename, with a plain-ASCII fallback for old clients. */
-function disposition(kind: "inline" | "attachment", name: string): string {
-  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
-}
 
 /**
  * Applications made on Career Reads. Every role; company accounts only ever see applications to
@@ -117,14 +112,7 @@ export class ApplicationsController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const { file, bytes } = await this.applications.cv(user, id);
-    const inline = file.contentType === "application/pdf" && query.download !== "true";
-    res.set({
-      "Content-Type": file.contentType,
-      "Content-Length": String(bytes.byteLength),
-      "Content-Disposition": disposition(inline ? "inline" : "attachment", file.originalName),
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-    });
+    setFileHeaders(res, file, bytes, query.download === "true");
     return new StreamableFile(bytes);
   }
 

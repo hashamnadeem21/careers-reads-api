@@ -51,6 +51,8 @@ export const applySchema = z.object({
       return z.NEVER;
     }),
   consent: z.literal("true", { error: "Please agree so the employer can see your application" }),
+  /** "true": send the CV saved on their account instead of uploading one. */
+  useSavedCv: z.literal("true").optional(),
   /** Hidden from people; bots fill it in. */
   website: z.string().max(500).optional(),
 });
