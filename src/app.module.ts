@@ -2,6 +2,7 @@ import { type MiddlewareConsumer, Module, type NestModule } from "@nestjs/common
 import { ApplicationsModule } from "./applications/applications.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { AutomationsModule } from "./automations/automations.module.js";
+import { CandidatesModule } from "./candidates/candidates.module.js";
 import { CommonModule } from "./common/common.module.js";
 import { RequestLoggerMiddleware } from "./common/request-logger.middleware.js";
 import { CompaniesModule } from "./companies/companies.module.js";
@@ -32,6 +33,7 @@ import { UsersModule } from "./users/users.module.js";
     PostsModule,
     JobsModule,
     ApplicationsModule,
+    CandidatesModule,
     MediaModule,
     CategoriesModule,
     AuthorsModule,

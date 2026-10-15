@@ -1,0 +1,1 @@
+ALTER TABLE "applications" ADD COLUMN "awaiting_confirmation" boolean DEFAULT false NOT NULL;

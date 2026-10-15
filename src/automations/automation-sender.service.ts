@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { type BeforeApplicationShutdown, Injectable, Logger } from "@nestjs/common";
 import { eq, inArray, sql } from "drizzle-orm";
+import { candidateWelcomeEmail, confirmEmailLink } from "../candidates/candidate-emails.js";
+import { CONFIRM_EMAIL_TTL_MS, createCandidateToken } from "../candidates/candidate-tokens.js";
 import type { Database } from "../db/client.js";
 import { InjectDb } from "../db/db.module.js";
-import { automationDeliveries, emailAutomations, subscribers } from "../db/schema.js";
-import { MAX_BATCH, MailerService } from "../mail/mailer.service.js";
+import { automationDeliveries, candidates, emailAutomations, subscribers } from "../db/schema.js";
+import { MAX_BATCH, MailerService, type OutgoingEmail } from "../mail/mailer.service.js";
 import { composeEmail } from "../newsletters/compose.js";
 
 /** Failed emails are tried this many times in total, this far apart. */
@@ -29,9 +31,15 @@ interface Claimed {
   id: number;
   attempts: number;
   dueAt: Date;
-  email: string;
-  token: string;
+  /** Subscriber deliveries (newsletter automations). */
+  subscriberEmail: string | null;
+  token: string | null;
   unsubscribedAt: Date | null;
+  /** Candidate deliveries (the account welcome email). */
+  candidateId: string | null;
+  candidateEmail: string | null;
+  candidateName: string | null;
+  candidateEmailVerifiedAt: Date | null;
   active: boolean;
   subject: string;
   previewText: string;
@@ -98,9 +106,13 @@ export class AutomationSender implements BeforeApplicationShutdown {
         id: automationDeliveries.id,
         attempts: automationDeliveries.attempts,
         dueAt: automationDeliveries.dueAt,
-        email: subscribers.email,
+        subscriberEmail: subscribers.email,
         token: subscribers.unsubscribeToken,
         unsubscribedAt: subscribers.unsubscribedAt,
+        candidateId: candidates.id,
+        candidateEmail: candidates.email,
+        candidateName: candidates.name,
+        candidateEmailVerifiedAt: candidates.emailVerifiedAt,
         active: emailAutomations.active,
         subject: emailAutomations.subject,
         previewText: emailAutomations.previewText,
@@ -110,7 +122,8 @@ export class AutomationSender implements BeforeApplicationShutdown {
         ctaUrl: emailAutomations.ctaUrl,
       })
       .from(automationDeliveries)
-      .innerJoin(subscribers, eq(subscribers.id, automationDeliveries.subscriberId))
+      .leftJoin(subscribers, eq(subscribers.id, automationDeliveries.subscriberId))
+      .leftJoin(candidates, eq(candidates.id, automationDeliveries.candidateId))
       .innerJoin(emailAutomations, eq(emailAutomations.id, automationDeliveries.automationId))
       .where(inArray(automationDeliveries.id, rows.map((row) => Number(row.id))))
       .orderBy(automationDeliveries.id);
@@ -133,7 +146,7 @@ export class AutomationSender implements BeforeApplicationShutdown {
     }
     if (toSend.length === 0) return;
 
-    const emails = toSend.map((row) => composeEmail(row, row.email, row.token));
+    const emails = await Promise.all(toSend.map((row) => this.compose(row)));
     const key = `automation-${createHash("sha256")
       .update(toSend.map((row) => `${row.id}:${row.attempts}`).join(","))
       .digest("hex")}`;
@@ -156,6 +169,21 @@ export class AutomationSender implements BeforeApplicationShutdown {
         summary.sent++;
       } else await this.failed(row, single.error, now, summary);
     }
+  }
+
+  /**
+   * Subscribers get the automation with their unsubscribe link. Candidates get the account welcome
+   * (no unsubscribe: it's about the account they just created), with "Confirm your email" as the
+   * button while their email isn't confirmed.
+   */
+  private async compose(row: Claimed): Promise<OutgoingEmail> {
+    if (row.candidateId && row.candidateEmail) {
+      const confirmLink = row.candidateEmailVerifiedAt
+        ? null
+        : confirmEmailLink(await createCandidateToken(this.db, row.candidateId, "confirm_email", CONFIRM_EMAIL_TTL_MS));
+      return candidateWelcomeEmail(row, { email: row.candidateEmail, name: row.candidateName ?? "" }, confirmLink);
+    }
+    return composeEmail(row, row.subscriberEmail ?? "", row.token ?? "");
   }
 
   /** Tries again in 15 minutes, up to 3 tries in total. */

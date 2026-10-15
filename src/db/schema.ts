@@ -41,7 +41,7 @@ export const themePref = pgEnum("theme_pref", ["light", "dark", "system"]);
 export const newsletterStatus = pgEnum("newsletter_status", ["draft", "scheduled", "sending", "sent"]);
 export const deliveryStatus = pgEnum("delivery_status", ["pending", "sent", "failed"]);
 /** What starts an automation. More triggers can be added later. */
-export const automationTrigger = pgEnum("automation_trigger", ["subscribed"]);
+export const automationTrigger = pgEnum("automation_trigger", ["subscribed", "candidate_signed_up"]);
 /** skipped: they unsubscribed, the automation was switched off, or it was days overdue. */
 export const automationDeliveryStatus = pgEnum("automation_delivery_status", ["pending", "sent", "failed", "skipped"]);
 
@@ -67,6 +67,20 @@ export const questionKind = pgEnum("question_kind", [
   "url",
 ]);
 export const applicationEventKind = pgEnum("application_event_kind", ["status_changed", "note", "cv_viewed"]);
+/** How a candidate account was created. "apply": applied before accounts existed (no sign-in yet). */
+export const candidateAuthMethod = pgEnum("candidate_auth_method", ["google", "password", "apply"]);
+/** What the admin's candidate history shows. */
+export const candidateEventKind = pgEnum("candidate_event_kind", [
+  "signed_up",
+  "signed_in",
+  "signed_out",
+  "email_confirmed",
+  "password_reset",
+  "applied",
+  "subscribed",
+]);
+/** One-time links emailed to candidates. */
+export const candidateTokenKind = pgEnum("candidate_token_kind", ["confirm_email", "reset_password"]);
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -274,10 +288,81 @@ export const candidates = pgTable(
     email: text("email").notNull().unique(),
     name: text("name").notNull(),
     phone: text("phone"),
+    /** Google's stable user id ("sub"), once they've signed in with Google. */
+    googleSub: text("google_sub").unique(),
+    /** Google profile photo (optional). */
+    avatarUrl: text("avatar_url"),
+    /** Argon2id. Null for Google-only accounts and applicants without an account. */
+    passwordHash: text("password_hash"),
+    /** Set by Google sign-in, or when they click "Confirm your email". */
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    /** When they ticked "I agree to the Terms and Privacy Policy" (Google: by continuing). */
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+    signupMethod: candidateAuthMethod("signup_method").notNull().default("apply"),
+    /** First sign-in. Null = an applicant from before accounts existed, who hasn't signed in yet. */
+    accountCreatedAt: timestamp("account_created_at", { withTimezone: true }),
+    lastSignInAt: timestamp("last_sign_in_at", { withTimezone: true }),
+    signInCount: integer("sign_in_count").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check("candidates_email_lowercase", sql`${t.email} = lower(${t.email})`)],
+  (t) => [
+    check("candidates_email_lowercase", sql`${t.email} = lower(${t.email})`),
+    index("candidates_account_created_idx").on(t.accountCreatedAt.desc()),
+  ],
+);
+
+/**
+ * Candidate sign-ins on the website, separate from staff `sessions` so a candidate can never
+ * reach the admin. `id` is the SHA-256 of the opaque token the website keeps in a cookie.
+ */
+export const candidateSessions = pgTable(
+  "candidate_sessions",
+  {
+    id: text("id").primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("candidate_sessions_candidate_idx").on(t.candidateId)],
+);
+
+/** Confirm-email and reset-password links. `tokenHash` is the SHA-256 of the token in the link. */
+export const candidateTokens = pgTable(
+  "candidate_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "cascade" }),
+    kind: candidateTokenKind("kind").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("candidate_tokens_candidate_idx").on(t.candidateId, t.kind)],
+);
+
+/** Sign-up, sign-in and other account history for the admin. No IP addresses or devices. */
+export const candidateEvents = pgTable(
+  "candidate_events",
+  {
+    id: serial("id").primaryKey(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "cascade" }),
+    kind: candidateEventKind("kind").notNull(),
+    method: candidateAuthMethod("method"),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("candidate_events_candidate_idx").on(t.candidateId, t.createdAt.desc()),
+    index("candidate_events_kind_idx").on(t.kind, t.createdAt.desc()),
+  ],
 );
 
 /**
@@ -328,6 +413,11 @@ export const applications = pgTable(
     statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
     /** When they ticked the privacy consent box. */
     consentAt: timestamp("consent_at", { withTimezone: true }).notNull(),
+    /**
+     * Sent from an account whose email isn't confirmed yet: hidden from employers and not emailed
+     * until the candidate confirms (then it's released and counts as sent at that moment).
+     */
+    awaitingConfirmation: boolean("awaiting_confirmation").notNull().default(false),
     /** Set once the employer and candidate emails have gone out (the scheduler retries until then). */
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
     notifyAttempts: smallint("notify_attempts").notNull().default(0),
@@ -508,9 +598,9 @@ export const automationDeliveries = pgTable(
     automationId: integer("automation_id")
       .notNull()
       .references(() => emailAutomations.id, { onDelete: "cascade" }),
-    subscriberId: integer("subscriber_id")
-      .notNull()
-      .references(() => subscribers.id, { onDelete: "cascade" }),
+    /** Exactly one of subscriber / candidate, depending on the automation's trigger. */
+    subscriberId: integer("subscriber_id").references(() => subscribers.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id").references(() => candidates.id, { onDelete: "cascade" }),
     status: automationDeliveryStatus("status").notNull().default("pending"),
     dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
     attempts: integer("attempts").notNull().default(0),
@@ -522,6 +612,8 @@ export const automationDeliveries = pgTable(
   },
   (t) => [
     unique("automation_deliveries_once").on(t.automationId, t.subscriberId),
+    unique("automation_deliveries_once_candidate").on(t.automationId, t.candidateId),
+    check("automation_deliveries_one_recipient", sql`num_nonnulls(${t.subscriberId}, ${t.candidateId}) = 1`),
     index("automation_deliveries_due_idx").on(t.dueAt).where(sql`${t.status} = 'pending'`),
     index("automation_deliveries_automation_idx").on(t.automationId, t.createdAt.desc()),
   ],
@@ -626,3 +718,6 @@ export type QuestionKind = (typeof questionKind.enumValues)[number];
 export type JobQuestionRow = typeof jobQuestions.$inferSelect;
 export type ApplicationRow = typeof applications.$inferSelect;
 export type PrivateFileRow = typeof privateFiles.$inferSelect;
+export type CandidateRow = typeof candidates.$inferSelect;
+export type CandidateAuthMethod = (typeof candidateAuthMethod.enumValues)[number];
+export type CandidateEventKind = (typeof candidateEventKind.enumValues)[number];

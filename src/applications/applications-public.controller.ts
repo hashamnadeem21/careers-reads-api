@@ -15,8 +15,9 @@ import type { Request } from "express";
 import { Public } from "../auth/decorators.js";
 import { slugParam } from "../common/params.js";
 import { clientIp } from "../common/request.js";
-import { SiteOnly } from "../common/site-key.guard.js";
-import { ApplyService, type UploadedCv } from "./apply.service.js";
+import { CandidateOnly, CurrentCandidate } from "../candidates/candidate.guard.js";
+import type { CandidateRow } from "../db/schema.js";
+import { type ApplyOutcome, ApplyService, type UploadedCv } from "./apply.service.js";
 import { CvUploadInterceptor } from "./cv-upload.interceptor.js";
 
 /** The website's application form: what to ask, and sending an application in. */
@@ -33,19 +34,20 @@ export class ApplicationsPublicController {
   }
 
   /**
-   * Apply (multipart). The website forwards the visitor's address for the rate limit (5 an hour).
-   * 400 `validation_failed` with `fields` (answers as `answers.<question id>`). A repeat application
-   * gets the same 201 but changes nothing (so nobody can probe who applied where).
+   * Apply (multipart) as the signed-in candidate (`X-Candidate-Session`). The website forwards the
+   * visitor's address for the rate limit (5 an hour). 400 `validation_failed` with `fields` (answers
+   * as `answers.<question id>`). `status`: submitted, held (until they confirm their email) or
+   * already_applied (nothing changes).
    */
   @Post(":slug/applications")
-  @SiteOnly()
+  @CandidateOnly()
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(CvUploadInterceptor)
   @ApiConsumes("multipart/form-data")
   @ApiBody({
     schema: {
       type: "object",
-      required: ["name", "email", "phone", "consent", "cv"],
+      required: ["name", "phone", "consent", "cv"],
       properties: {
         name: { type: "string" },
         email: { type: "string" },
@@ -64,8 +66,15 @@ export class ApplicationsPublicController {
     @Param("slug", slugParam) slug: string,
     @Body() body: unknown,
     @UploadedFile() cv: UploadedCv | undefined,
-  ): Promise<{ message: string }> {
-    await this.apply.apply(clientIp(request), slug, body, cv);
-    return { message: "Application sent. We've emailed you a copy." };
+    @CurrentCandidate() candidate: CandidateRow,
+  ): Promise<{ status: ApplyOutcome; message: string }> {
+    const status = await this.apply.apply(clientIp(request), slug, body, cv, candidate);
+    const message =
+      status === "held"
+        ? `Almost done: confirm your email (${candidate.email}) and your application goes to the employer straight away.`
+        : status === "already_applied"
+          ? "You've already applied for this job."
+          : "Application sent. We've emailed you a copy.";
+    return { status, message };
   }
 }

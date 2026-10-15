@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import request from "supertest";
 import { hashPassword } from "../../src/auth/password.js";
+import { CandidateSessionsService } from "../../src/candidates/candidate-sessions.service.js";
 import type { Database } from "../../src/db/client.js";
-import { articles, authors, categories, companies, jobs, users, type Role } from "../../src/db/schema.js";
+import { articles, authors, candidates, categories, companies, jobs, users, type Role } from "../../src/db/schema.js";
 import { TEST_ADMIN_API_KEY, TEST_SITE_API_KEY } from "./test-db.js";
 
 export const PASSWORD = "correct-horse-battery-1";
@@ -140,4 +141,31 @@ export async function createJob(db: Database, input: Partial<typeof jobs.$inferI
     })
     .returning();
   return row;
+}
+
+/**
+ * A candidate account and a website session for it (`X-Candidate-Session`). `verified: false` is a
+ * password sign-up that hasn't confirmed its email yet.
+ */
+export async function createCandidateSession(
+  app: NestExpressApplication,
+  db: Database,
+  email: string,
+  { verified = true, name = "Sara Khan" }: { verified?: boolean; name?: string } = {},
+): Promise<{ id: string; token: string; headers: Record<string, string> }> {
+  const now = new Date();
+  const [candidate] = await db
+    .insert(candidates)
+    .values({
+      email: email.toLowerCase(),
+      name,
+      signupMethod: "password",
+      accountCreatedAt: now,
+      termsAcceptedAt: now,
+      emailVerifiedAt: verified ? now : null,
+    })
+    .onConflictDoUpdate({ target: candidates.email, set: { accountCreatedAt: now } })
+    .returning({ id: candidates.id });
+  const { token } = await app.get(CandidateSessionsService).issue(candidate.id);
+  return { id: candidate.id, token, headers: { ...asSiteServer(), "x-candidate-session": token } };
 }

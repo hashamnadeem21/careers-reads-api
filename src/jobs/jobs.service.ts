@@ -42,7 +42,7 @@ const notFound = (message = "This job no longer exists. It may have been deleted
 
 /** How many applications a job has (the subquery behind the jobs list's count). */
 const applicationCount =
-  sql<number>`(select count(*) from ${applications} where ${applications.jobId} = ${jobs.id})`.mapWith(Number);
+  sql<number>`(select count(*) from ${applications} where ${applications.jobId} = ${jobs.id} and not ${applications.awaitingConfirmation})`.mapWith(Number);
 
 const invalid = (fields: Record<string, string>) =>
   new ApiError(HttpStatus.BAD_REQUEST, "validation_failed", "Please fix the highlighted fields.", fields);

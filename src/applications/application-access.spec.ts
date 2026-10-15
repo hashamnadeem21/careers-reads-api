@@ -16,7 +16,13 @@ describe("application access", () => {
     expect(canAccessApplication(editor, { companyId: null })).toBe(true);
     expect(canAccessApplication(editor, { companyId: "acme" })).toBe(false);
     expect(canAccessApplication(owner, { companyId: "acme" })).toBe(true);
-    expect(applicationScope(owner)).toBeUndefined();
+    expect(applicationScope(owner)).toBeDefined(); // still hides held applications
     expect(applicationScope(editor)).toBeDefined();
+  });
+
+  it("hides applications waiting for the candidate to confirm their email, even from the super admin", () => {
+    expect(canAccessApplication(owner, { companyId: "acme", awaitingConfirmation: true })).toBe(false);
+    expect(canAccessApplication(acme, { companyId: "acme", awaitingConfirmation: true })).toBe(false);
+    expect(canAccessApplication(acme, { companyId: "acme", awaitingConfirmation: false })).toBe(true);
   });
 });
